@@ -1,5 +1,11 @@
 # TN Trade Panel
 
+> **⚠ EXPERIMENTAL — USE AT YOUR OWN RISK**
+>
+> This is a **strictly experimental** system. It has been tested **only** on **Rithmic futures**, specifically **MNQ**. Behavior on other brokers, data feeds, or symbols is unknown and unsupported.
+>
+> **We accept no liability** for trading losses, missed stops, software bugs, freezes, or any other damage arising from use of this software. The virtual SL is **not** a broker-side stop — if Quantower, the plugin, or the indicator stops updating, protection may fail. **Paper-trade first.** You alone are responsible for every order you send.
+
 A dockable **risk-sized trade panel** for [Quantower](https://www.quantower.com), with draggable chart lines and a **virtual stop-loss** (no SL order — price touch flattens the account).
 
 You place Entry / SL / TP lines on the chart, the panel sizes quantity from a USD loss limit, then **Enter** sends the order with TP attached. The SL stays as a managed line. Optional break-even (BE) line moves the SL to average entry when touched.
@@ -141,7 +147,7 @@ Indicator  (TNTradePanelLines)  ← must be on the chart for draw/drag
 
 ## Disclaimer
 
-This software is provided **for educational and personal-research purposes only**. It is not financial advice. Trading involves substantial risk. **Test on a simulator before using on a live account.** Virtual SL management depends on the panel/indicator running and receiving ticks — it is not a broker-side stop.
+**Strictly experimental.** Tested only on **Rithmic futures (MNQ)**. Not financial advice. Trading involves substantial risk of loss. The authors and publishers **accept no responsibility** for any losses or damages. Virtual SL management depends on the panel/indicator running and receiving ticks — it is **not** a broker-side stop. **Test on a simulator before using on a live account.**
 
 ## License
 
