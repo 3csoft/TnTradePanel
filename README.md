@@ -10,6 +10,12 @@ A dockable **risk-sized trade panel** for [Quantower](https://www.quantower.com)
 
 You place Entry / SL / TP lines on the chart, the panel sizes quantity from a USD loss limit, then **Enter** sends the order with TP attached. The SL stays as a managed line. Optional break-even (BE) line moves the SL to average entry when touched.
 
+### Short demo
+
+[![TN Trade Panel demo](https://img.youtube.com/vi/EEH_Ov1c80U/hqdefault.jpg)](https://youtu.be/EEH_Ov1c80U)
+
+Watch on YouTube: [https://youtu.be/EEH_Ov1c80U](https://youtu.be/EEH_Ov1c80U)
+
 ## Features
 
 - **Loss limit (USD)** — set in panel Settings; quantity = limit / |entry−SL| / tick value.
