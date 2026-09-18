@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>TNTradePanel.Shared</AssemblyName>
+    <RootNamespace>TNTradePanel.Shared</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="TradingPlatform.BusinessLayer">
+      <HintPath>$(QuantowerBin)\TradingPlatform.BusinessLayer.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+  </ItemGroup>
+  <Target Name="CopySharedToQuantowerBin" AfterTargets="Build">
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(QuantowerBin)" SkipUnchangedFiles="true" />
+  </Target>
+</Project>

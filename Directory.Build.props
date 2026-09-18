@@ -1,0 +1,14 @@
+<Project>
+  <PropertyGroup>
+    <QuantowerRoot Condition="'$(QuantowerRoot)' == ''">C:\Quantower</QuantowerRoot>
+    <QuantowerVersion Condition="'$(QuantowerVersion)' == ''">v1.146.18</QuantowerVersion>
+    <QuantowerBin>$(QuantowerRoot)\TradingPlatform\$(QuantowerVersion)\bin</QuantowerBin>
+    <QuantowerScripts>$(QuantowerRoot)\Settings\Scripts</QuantowerScripts>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <Platforms>AnyCPU</Platforms>
+  </PropertyGroup>
+</Project>

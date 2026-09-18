@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="../../../themes/default/css/colors.css"/>
+    <link rel="stylesheet" href="../../../themes/default/css/core.css" />
+    <script>
+        (async function () {
+            await CefSharp.BindObjectAsync("bound");
+        })();
+
+        function setDir(d) {
+            var longBtn = document.getElementById('longbutton');
+            var shortBtn = document.getElementById('shortbutton');
+            if (!longBtn || !shortBtn)
+                return;
+            if (d === 'short') {
+                longBtn.className = 'dirbtn off';
+                shortBtn.className = 'dirbtn on-short';
+            } else {
+                longBtn.className = 'dirbtn on-long';
+                shortBtn.className = 'dirbtn off';
+            }
+        }
+    </script>
+    <style>
+        body { margin: 0; }
+        .row {
+            display: block !important;
+            margin: 8px 6px;
+            clear: both;
+        }
+        label, .meta, button, input, select { display: block !important; width: 100%; box-sizing: border-box; }
+        label { margin-bottom: 4px; }
+        button { width: 100%; margin-top: 6px; }
+        .dirrow {
+            display: flex !important;
+            gap: 4px;
+        }
+        .dirrow button {
+            display: inline-block !important;
+            width: 50% !important;
+            margin-top: 0;
+        }
+        .dirbtn.off { background: #6a6a6a !important; color: #e8e8e8 !important; }
+        .dirbtn.on-long { background: #1a8a3a !important; color: #ffffff !important; }
+        .dirbtn.on-short { background: #c02828 !important; color: #ffffff !important; }
+        #statustext { font-size: 12px; opacity: 0.8; }
+        #panicbutton { background: #8b1e1e; }
+        #enterbutton { background: #111111; color: #ffffff; }
+        #accountbutton { text-align: left; }
+    </style>
+</head>
+<body>
+    <panel class="autoHeight shadow" style="width:150px" id="panel">
+        <panelHeader draggable="true">
+            <panelTitle id="window_title">
+                <linker id="linker">
+                    <icon class="link"></icon>
+                </linker>
+                <panelTitleText id="window_title_text">TN Trade Panel</panelTitleText>
+            </panelTitle>
+            <panelControls>
+                <icon id="window_close" class="close"></icon>
+            </panelControls>
+        </panelHeader>
+        <panelBody>
+            <div class="row meta">
+                <div id="symboltext">Symbol: —</div>
+            </div>
+            <div class="row">
+                <label for="accountselect">Account</label>
+                <select id="accountselect"></select>
+            </div>
+            <div class="row">
+                <button type="button" id="accountbutton" class="login100-form-btn">Account lookup...</button>
+            </div>
+            <div class="row meta">
+                <div id="limittext">Limit: —</div>
+            </div>
+            <div class="row meta">
+                <div id="qtytext">Quantity: —</div>
+            </div>
+            <div class="row meta">
+                <div id="rrtext">RR: —</div>
+            </div>
+            <div class="row">
+                <button type="button" id="entrytoggle" class="login100-form-btn">Entry: on</button>
+            </div>
+            <div class="row dirrow">
+                <button type="button" id="longbutton" class="dirbtn on-long">LONG</button>
+                <button type="button" id="shortbutton" class="dirbtn off">SHORT</button>
+            </div>
+            <div class="row">
+                <button type="button" id="drawlinesbutton" class="login100-form-btn">Lines</button>
+            </div>
+            <div class="row">
+                <button type="button" id="bebutton" class="login100-form-btn">BE line</button>
+            </div>
+            <div class="row">
+                <button type="button" id="enterbutton" class="login100-form-btn">Enter</button>
+            </div>
+            <div class="row">
+                <button type="button" id="panicbutton" class="login100-form-btn">Panic</button>
+            </div>
+            <div class="row">
+                <div id="statustext">Loss limit and line styles are in panel Settings.</div>
+            </div>
+        </panelBody>
+    </panel>
+</body>
+</html>

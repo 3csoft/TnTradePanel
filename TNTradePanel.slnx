@@ -1,0 +1,7 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/TNTradePanel.Indicator/TNTradePanel.Indicator.csproj" />
+    <Project Path="src/TNTradePanel.Plugin/TNTradePanel.Plugin.csproj" />
+    <Project Path="src/TNTradePanel.Shared/TNTradePanel.Shared.csproj" />
+  </Folder>
+</Solution>

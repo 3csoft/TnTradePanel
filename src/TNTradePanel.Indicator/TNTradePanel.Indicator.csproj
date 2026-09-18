@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AlgoType>Indicator</AlgoType>
+    <AssemblyName>TNTradePanelLines</AssemblyName>
+    <RootNamespace>TNTradePanel.Indicator</RootNamespace>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
+    <OutputPath>$(QuantowerScripts)\Indicators\TNTradePanelLines</OutputPath>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|AnyCPU'">
+    <OutputPath>$(QuantowerScripts)\Indicators\TNTradePanelLines</OutputPath>
+  </PropertyGroup>
+  <PropertyGroup>
+    <SupportedOSPlatform>windows</SupportedOSPlatform>
+    <NoWarn>$(NoWarn);CA1416</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="System.Drawing.Common" Version="10.0.2" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\TNTradePanel.Shared\TNTradePanel.Shared.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Reference Include="TradingPlatform.BusinessLayer">
+      <HintPath>$(QuantowerBin)\TradingPlatform.BusinessLayer.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!-- After Release build, copy ship-ready files into repo-root dist/ for GitHub. -->
+  <PropertyGroup>
+    <RepoDistIndicatorDir>$(MSBuildThisFileDirectory)..\..\dist\Indicators\TNTradePanelLines\</RepoDistIndicatorDir>
+  </PropertyGroup>
+  <Target Name="CopyReleaseArtifactsToDist" AfterTargets="Build" Condition="'$(Configuration)' == 'Release'">
+    <MakeDir Directories="$(RepoDistIndicatorDir)" />
+    <ItemGroup>
+      <_DistDlls Include="$(OutputPath)*.dll" Exclude="$(OutputPath)TradingPlatform*.dll" />
+      <_DistDeps Include="$(OutputPath)TNTradePanelLines.deps.json" Condition="Exists('$(OutputPath)TNTradePanelLines.deps.json')" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_DistDlls)" DestinationFolder="$(RepoDistIndicatorDir)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(_DistDeps)" DestinationFolder="$(RepoDistIndicatorDir)" SkipUnchangedFiles="true" Condition="@(_DistDeps->Count()) &gt; 0" />
+    <Message Importance="high" Text="Copied indicator release artifacts to $(RepoDistIndicatorDir)" />
+  </Target>
+</Project>

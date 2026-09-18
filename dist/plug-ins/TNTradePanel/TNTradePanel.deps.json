@@ -1,0 +1,39 @@
+{
+  "runtimeTarget": {
+    "name": ".NETCoreApp,Version=v10.0",
+    "signature": ""
+  },
+  "compilationOptions": {},
+  "targets": {
+    ".NETCoreApp,Version=v10.0": {
+      "TNTradePanel/1.0.0": {
+        "dependencies": {
+          "TNTradePanel.Shared": "1.0.0"
+        },
+        "runtime": {
+          "TNTradePanel.dll": {}
+        }
+      },
+      "TNTradePanel.Shared/1.0.0": {
+        "runtime": {
+          "TNTradePanel.Shared.dll": {
+            "assemblyVersion": "1.0.0.0",
+            "fileVersion": "1.0.0.0"
+          }
+        }
+      }
+    }
+  },
+  "libraries": {
+    "TNTradePanel/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "TNTradePanel.Shared/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    }
+  }
+}

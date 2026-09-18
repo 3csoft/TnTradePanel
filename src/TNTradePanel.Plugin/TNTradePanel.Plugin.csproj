@@ -1,0 +1,50 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AlgoType>Plugin</AlgoType>
+    <AssemblyName>TNTradePanel</AssemblyName>
+    <RootNamespace>TNTradePanel</RootNamespace>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
+    <OutputPath>$(QuantowerScripts)\plug-ins\TNTradePanel</OutputPath>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|AnyCPU'">
+    <OutputPath>$(QuantowerScripts)\plug-ins\TNTradePanel</OutputPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Remove="HTML\layout.html" />
+    <EmbeddedResource Include="HTML\layout.html">
+      <LogicalName>$(AssemblyName).HTML.layout.html</LogicalName>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\TNTradePanel.Shared\TNTradePanel.Shared.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Reference Include="TradingPlatform.BusinessLayer">
+      <HintPath>$(QuantowerBin)\TradingPlatform.BusinessLayer.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="TradingPlatform.PresentationLayer.Plugins">
+      <HintPath>$(QuantowerBin)\TradingPlatform.PresentationLayer.Plugins.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!-- After Release build, copy ship-ready files into repo-root dist/ for GitHub. -->
+  <PropertyGroup>
+    <RepoDistPluginDir>$(MSBuildThisFileDirectory)..\..\dist\plug-ins\TNTradePanel\</RepoDistPluginDir>
+  </PropertyGroup>
+  <Target Name="CopyReleaseArtifactsToDist" AfterTargets="Build" Condition="'$(Configuration)' == 'Release'">
+    <MakeDir Directories="$(RepoDistPluginDir)HTML" />
+    <ItemGroup>
+      <_DistDlls Include="$(OutputPath)*.dll" Exclude="$(OutputPath)TradingPlatform*.dll" />
+      <_DistDeps Include="$(OutputPath)TNTradePanel.deps.json" Condition="Exists('$(OutputPath)TNTradePanel.deps.json')" />
+      <_DistHtml Include="$(OutputPath)HTML\**\*" Condition="Exists('$(OutputPath)HTML')" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_DistDlls)" DestinationFolder="$(RepoDistPluginDir)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(_DistDeps)" DestinationFolder="$(RepoDistPluginDir)" SkipUnchangedFiles="true" Condition="@(_DistDeps->Count()) &gt; 0" />
+    <Copy SourceFiles="@(_DistHtml)" DestinationFolder="$(RepoDistPluginDir)HTML" SkipUnchangedFiles="true" Condition="@(_DistHtml->Count()) &gt; 0" />
+    <Message Importance="high" Text="Copied plugin release artifacts to $(RepoDistPluginDir)" />
+  </Target>
+</Project>
