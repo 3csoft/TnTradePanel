@@ -23,6 +23,13 @@
                 shortBtn.className = 'dirbtn off';
             }
         }
+
+        function setGhostWarn(on) {
+            var el = document.getElementById('ghostwarn');
+            if (!el)
+                return;
+            el.className = on ? 'on' : '';
+        }
     </script>
     <style>
         body { margin: 0; }
@@ -50,6 +57,29 @@
         #panicbutton { background: #8b1e1e; }
         #enterbutton { background: #111111; color: #ffffff; }
         #accountbutton { text-align: left; }
+        #drawlinesbutton {
+            background: #f0c400 !important;
+            color: #111111 !important;
+            font-weight: 700 !important;
+        }
+        #ghostwarn {
+            display: none;
+            font-size: 12px;
+            font-weight: 700;
+            text-align: center;
+            color: #ff2020;
+            padding: 4px 2px;
+            border: 1px solid #ff4040;
+            background: #3a1010;
+        }
+        #ghostwarn.on {
+            display: block;
+            animation: ghostblink 0.85s ease-in-out infinite;
+        }
+        @keyframes ghostblink {
+            0%, 100% { opacity: 1; background: #5a1010; color: #ff4040; }
+            50% { opacity: 0.35; background: #2a0808; color: #ffcc00; }
+        }
     </style>
 </head>
 <body>
@@ -103,6 +133,9 @@
             </div>
             <div class="row">
                 <button type="button" id="panicbutton" class="login100-form-btn">Panic</button>
+            </div>
+            <div class="row">
+                <div id="ghostwarn">GHOST ORDERS — Panic!</div>
             </div>
             <div class="row">
                 <div id="statustext">Loss limit and line styles are in panel Settings.</div>

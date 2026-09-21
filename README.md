@@ -18,7 +18,7 @@ Watch on YouTube: [https://youtu.be/EEH_Ov1c80U](https://youtu.be/EEH_Ov1c80U)
 
 ## Features
 
-- **Loss limit (USD)** — set in panel Settings; quantity = limit / |entry−SL| / tick value.
+- **Loss limit (USD)** — sizes quantity; also an **emergency flatten** if floating loss reaches the limit (even while dragging SL).
 - **Lines** — place or clear Entry, SL, TP on the color-linked chart (indicator required).
 - **LONG / SHORT** — draw direction; opposite side blocked while a position is open.
 - **Entry on/off** — toggle Entry while SL/TP are already out; always snaps to current market.
@@ -28,6 +28,7 @@ Watch on YouTube: [https://youtu.be/EEH_Ov1c80U](https://youtu.be/EEH_Ov1c80U)
 - **BE line** — with an open position, drag into place; on touch, SL moves to avg entry ± offset ticks.
 - **Scale-in** — only allowed when SL is already at/beyond prior entry (no open risk).
 - **Panic** — close everything on the account and reset line state.
+- **Ghost-order warning** — flashing alert under Panic when the account has no position but leftover working orders.
 - **Line style** — colors, width, dash style in Settings.
 
 Built-in chart Order Entry is not modified.
@@ -133,10 +134,11 @@ Indicator  (TNTradePanelLines)  ← must be on the chart for draw/drag
 | **Account** | Select trading account (or Account lookup) |
 | **Entry: on/off** | Show/hide Entry line; with SL/TP out, places at current market |
 | **LONG / SHORT** | Draw direction |
-| **Lines** | Toggle Entry/SL/TP placement |
+| **Lines** | Toggle Entry/SL/TP placement (yellow button) |
 | **BE line** | Toggle break-even line (open position only) |
 | **Enter** | Place order |
 | **Panic** | Flatten account + clear setup |
+| **Ghost warning** | Flashes under Panic if orders remain with no open position |
 
 ## Settings
 

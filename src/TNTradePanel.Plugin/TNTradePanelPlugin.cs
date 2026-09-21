@@ -25,7 +25,9 @@ namespace TNTradePanel.Plugin
         private bool enterBusy;
         private bool panicBusy;
         private bool slCloseBusy;
+        private bool lossLimitCloseBusy;
         private bool entryCheckOn = true;
+        private bool? lastGhostWarnVisible;
         private int hubSeq;
         private int nextDrawDirection = 1;
         private double? lastAppliedBreakEven;
@@ -99,7 +101,7 @@ namespace TNTradePanel.Plugin
             };
         }
 
-        public override Size DefaultSize => new Size(170, 540);
+        public override Size DefaultSize => new Size(170, 580);
 
         public override IList<SettingItem> Settings
         {
@@ -523,7 +525,9 @@ namespace TNTradePanel.Plugin
             try
             {
                 this.EnforceStopRiskCap();
+                this.CheckLossLimitBreach();
                 this.CheckVirtualStopTouch();
+                this.RefreshGhostOrderWarn();
                 if (!TradeSetupHub.TryPull(ref this.hubSeq, out _))
                     return;
                 lock (TradeSetupHub.Sync)
@@ -621,6 +625,7 @@ namespace TNTradePanel.Plugin
 
         private void OnNewLast(Symbol symbol, Last last)
         {
+            this.CheckLossLimitBreach(last?.Price);
             this.CheckVirtualStopTouch(last?.Price);
             if (!this.beArmed || last == null)
                 return;
@@ -705,6 +710,124 @@ namespace TNTradePanel.Plugin
             TradeSetupHub.NotifySetupChanged();
             this.SetStatus("SL restored to initial risk: "
                 + (this.CurrentSymbol?.FormatPrice(capped) ?? capped.ToString("0.####")));
+        }
+
+        private void RefreshGhostOrderWarn()
+        {
+            bool show = false;
+            if (this.currentAccount != null)
+            {
+                bool hasPosition = Core.Instance.Positions.Any(p =>
+                    p != null && SameAccount(p.Account, this.currentAccount));
+                if (!hasPosition)
+                {
+                    show = Core.Instance.Orders.Any(o =>
+                        o != null && SameAccount(o.Account, this.currentAccount));
+                }
+            }
+
+            if (this.lastGhostWarnVisible.HasValue && this.lastGhostWarnVisible.Value == show)
+                return;
+
+            this.lastGhostWarnVisible = show;
+            try
+            {
+                this.Window.Browser.UpdateHtml(string.Empty, HtmlAction.InvokeJs,
+                    show ? "setGhostWarn(true)" : "setGhostWarn(false)");
+            }
+            catch
+            {
+            }
+        }
+
+        /// <summary>
+        /// If open PnL loss exceeds the configured USD limit, flatten even while the SL line is
+        /// being dragged (so a held drag cannot bypass the risk limit).
+        /// </summary>
+        private void CheckLossLimitBreach(double? lastPrice = null)
+        {
+            if (this.panicBusy || this.slCloseBusy || this.lossLimitCloseBusy || this.currentAccount == null)
+                return;
+            if (this.lossLimitUsd <= 0)
+                return;
+
+            Position[] positions = Core.Instance.Positions
+                .Where(p => p != null && SameAccount(p.Account, this.currentAccount))
+                .ToArray();
+            if (positions.Length == 0)
+                return;
+
+            double totalPnl = 0;
+            int counted = 0;
+            foreach (Position position in positions)
+            {
+                double? pnl = this.EstimateOpenPnlUsd(position, lastPrice);
+                if (!pnl.HasValue)
+                    continue;
+                totalPnl += pnl.Value;
+                counted++;
+            }
+
+            if (counted == 0)
+                return;
+
+            // Breach when floating loss is at least the configured limit.
+            if (totalPnl > -this.lossLimitUsd)
+                return;
+
+            this.CloseAllOnLossLimit(totalPnl);
+        }
+
+        private double? EstimateOpenPnlUsd(Position position, double? lastPrice)
+        {
+            if (position?.Symbol == null || position.OpenPrice <= 0 || position.Quantity <= 0)
+                return null;
+
+            int direction = position.Side == Side.Buy ? 1 : -1;
+            double market = lastPrice ?? 0;
+            if (market <= 0)
+            {
+                try
+                {
+                    Symbol symbol = position.Symbol;
+                    if (direction > 0 && symbol.Bid > 0)
+                        market = symbol.Bid;
+                    else if (direction < 0 && symbol.Ask > 0)
+                        market = symbol.Ask;
+                    else if (symbol.Last > 0)
+                        market = symbol.Last;
+                }
+                catch
+                {
+                }
+            }
+
+            if (market <= 0)
+                return null;
+
+            return PositionSizing.EstimateStopUsd(
+                position.Symbol, position.OpenPrice, market, position.Quantity, direction);
+        }
+
+        private void CloseAllOnLossLimit(double totalPnl)
+        {
+            if (this.lossLimitCloseBusy)
+                return;
+            this.lossLimitCloseBusy = true;
+            this.panicBusy = true;
+            try
+            {
+                FlattenResult flat = this.FlattenAccount();
+                this.ResetSetupState();
+                string pnlText = totalPnl.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
+                this.SetStatus("Loss limit hit (" + pnlText + " USD) — account flat: "
+                    + flat.Closed + " positions, " + flat.Cancelled + " orders cancelled.");
+            }
+            finally
+            {
+                this.panicBusy = false;
+                this.lossLimitCloseBusy = false;
+            }
         }
 
         private void CheckVirtualStopTouch(double? lastPrice = null)
@@ -993,8 +1116,10 @@ namespace TNTradePanel.Plugin
             this.beArmed = false;
             this.lastAppliedBreakEven = null;
             this.nextDrawDirection = 1;
+            this.lastGhostWarnVisible = null;
             this.RefreshDirectionUi();
             this.RefreshDrawButtonUi();
+            this.RefreshGhostOrderWarn();
         }
 
         private int CountTicks(double fromPrice, double? toPrice)
