@@ -102,7 +102,7 @@ namespace TNTradePanel.Plugin
             };
         }
 
-        public override Size DefaultSize => new Size(170, 640);
+        public override Size DefaultSize => new Size(180, 800);
 
         public override IList<SettingItem> Settings
         {
