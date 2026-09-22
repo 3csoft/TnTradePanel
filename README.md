@@ -25,10 +25,11 @@ Watch on YouTube: [https://youtu.be/EEH_Ov1c80U](https://youtu.be/EEH_Ov1c80U)
 - **Enter** — market / limit / stop entry with TP; SL remains a **virtual line** (no protective SL order).
 - **Virtual SL** — when price touches the SL line, **all positions and orders** on the selected account are flattened.
 - **SL risk lock** — after entry, SL cannot widen beyond initial risk from average entry (snaps back on drop).
-- **BE line** — with an open position, drag into place; on touch, SL moves to avg entry ± offset ticks.
+- **BE line** — purple button; with an open position, drag into place; on touch, SL moves to avg entry ± offset ticks and the BE line is removed.
 - **Scale-in** — only allowed when SL is already at/beyond prior entry (no open risk).
 - **Panic** — close everything on the account and reset line state.
 - **Ghost-order warning** — flashing alert under Panic when the account has no position but leftover working orders.
+- **Account panel** — bottom toggle shows Balance, Cash on hand, and Daily PnL.
 - **Line style** — colors, width, dash style in Settings.
 
 Built-in chart Order Entry is not modified.
@@ -135,10 +136,11 @@ Indicator  (TNTradePanelLines)  ← must be on the chart for draw/drag
 | **Entry: on/off** | Show/hide Entry line; with SL/TP out, places at current market |
 | **LONG / SHORT** | Draw direction |
 | **Lines** | Toggle Entry/SL/TP placement (yellow button) |
-| **BE line** | Toggle break-even line (open position only) |
+| **BE line** | Toggle break-even line (open position only); removed when hit |
 | **Enter** | Place order |
 | **Panic** | Flatten account + clear setup |
 | **Ghost warning** | Flashes under Panic if orders remain with no open position |
+| **Account [show]** | Expand/collapse Balance, Cash on hand, Daily PnL |
 
 ## Settings
 

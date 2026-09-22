@@ -27,6 +27,7 @@ namespace TNTradePanel.Plugin
         private bool slCloseBusy;
         private bool lossLimitCloseBusy;
         private bool entryCheckOn = true;
+        private bool accountInfoOpen;
         private bool? lastGhostWarnVisible;
         private int hubSeq;
         private int nextDrawDirection = 1;
@@ -101,7 +102,7 @@ namespace TNTradePanel.Plugin
             };
         }
 
-        public override Size DefaultSize => new Size(170, 580);
+        public override Size DefaultSize => new Size(170, 640);
 
         public override IList<SettingItem> Settings
         {
@@ -204,6 +205,7 @@ namespace TNTradePanel.Plugin
             this.Window.Browser.AddEventHandler("bebutton", "onclick", this.OnBeClick);
             this.Window.Browser.AddEventHandler("enterbutton", "onclick", this.OnEnterClick);
             this.Window.Browser.AddEventHandler("panicbutton", "onclick", this.OnPanicClick);
+            this.Window.Browser.AddEventHandler("accountinfobutton", "onclick", this.OnAccountInfoToggle);
 
             this.RegisterService<LinkingPluginService>();
             this.pollTimer = new System.Threading.Timer(_ => this.PollHub(), null, 250, 250);
@@ -214,6 +216,7 @@ namespace TNTradePanel.Plugin
             this.RefreshDirectionUi();
             this.RefreshDrawButtonUi();
             this.RefreshQtyUi();
+            this.RefreshAccountInfoUi(force: true);
             this.SetStatus("Select an account and add TN Trade Panel Lines to the chart.");
         }
 
@@ -283,7 +286,184 @@ namespace TNTradePanel.Plugin
             }
 
             this.RefreshLinkedLabels();
+            this.RefreshAccountInfoUi(force: true);
             this.SetStatus("Account: " + selected.Name);
+        }
+
+        private void OnAccountInfoToggle(string elementId, object args)
+        {
+            this.accountInfoOpen = !this.accountInfoOpen;
+            this.RefreshAccountInfoUi(force: true);
+        }
+
+        private void RefreshAccountInfoUi(bool force)
+        {
+            try
+            {
+                this.Window.Browser.UpdateHtml(string.Empty, HtmlAction.InvokeJs,
+                    this.accountInfoOpen ? "setAccountInfo(true)" : "setAccountInfo(false)");
+            }
+            catch
+            {
+            }
+
+            if (!this.accountInfoOpen && !force)
+                return;
+
+            string balance = "—";
+            string cash = "—";
+            string dayPnl = "—";
+
+            Account account = this.currentAccount;
+            if (account != null)
+            {
+                try
+                {
+                    balance = FormatMoney(account.Balance, account);
+                }
+                catch
+                {
+                }
+
+                cash = this.TryGetAccountAdditionalValue(account,
+                    "Cash on hand", "CashOnHand", "Cash on Hand", "Cash")
+                    ?? "—";
+
+                dayPnl = this.TryGetAccountAdditionalValue(account,
+                    "Daily PnL", "Daily P&L", "Day PnL", "Day P&L", "Today PnL",
+                    "Net Daily PnL", "DailyNetPnL", "OpenPnL", "Open PnL")
+                    ?? this.TryFormatOpenPositionsPnl(account)
+                    ?? "—";
+            }
+
+            this.Window.Browser.UpdateHtml("accbalance", HtmlAction.SetInnerHtml, balance);
+            this.Window.Browser.UpdateHtml("acccash", HtmlAction.SetInnerHtml, cash);
+            this.Window.Browser.UpdateHtml("accdaypnl", HtmlAction.SetInnerHtml, dayPnl);
+        }
+
+        private string TryGetAccountAdditionalValue(Account account, params string[] keys)
+        {
+            if (account?.AdditionalInfo == null || keys == null || keys.Length == 0)
+                return null;
+
+            try
+            {
+                foreach (string key in keys)
+                {
+                    if (string.IsNullOrWhiteSpace(key))
+                        continue;
+                    if (account.AdditionalInfo.TryGetItem(key, out AdditionalInfoItem item)
+                        && item?.Value != null)
+                        return FormatAccountFieldValue(item.Value, account);
+                }
+
+                foreach (AdditionalInfoItem item in account.AdditionalInfo)
+                {
+                    if (item?.Value == null)
+                        continue;
+                    string id = item.Id ?? string.Empty;
+                    string name = item.NameKey ?? string.Empty;
+                    foreach (string key in keys)
+                    {
+                        if (string.IsNullOrWhiteSpace(key))
+                            continue;
+                        if (id.Equals(key, StringComparison.OrdinalIgnoreCase)
+                            || name.Equals(key, StringComparison.OrdinalIgnoreCase)
+                            || id.IndexOf(key, StringComparison.OrdinalIgnoreCase) >= 0
+                            || name.IndexOf(key, StringComparison.OrdinalIgnoreCase) >= 0)
+                            return FormatAccountFieldValue(item.Value, account);
+                    }
+                }
+            }
+            catch
+            {
+            }
+
+            return null;
+        }
+
+        private string TryFormatOpenPositionsPnl(Account account)
+        {
+            try
+            {
+                double sum = 0;
+                bool any = false;
+                foreach (Position position in Core.Instance.Positions.Where(p =>
+                    p != null && SameAccount(p.Account, account)))
+                {
+                    double? pnl = null;
+                    try
+                    {
+                        // NetPnL / GrossPnL are PnLItem on many Quantower builds.
+                        object net = position.GetType().GetProperty("NetPnL")?.GetValue(position)
+                            ?? position.GetType().GetProperty("GrossPnL")?.GetValue(position);
+                        if (net != null)
+                        {
+                            object value = net.GetType().GetProperty("Value")?.GetValue(net) ?? net;
+                            if (value is double d)
+                                pnl = d;
+                            else if (value is float f)
+                                pnl = f;
+                            else if (value is decimal m)
+                                pnl = (double)m;
+                            else if (value != null && double.TryParse(value.ToString(),
+                                System.Globalization.NumberStyles.Any,
+                                System.Globalization.CultureInfo.InvariantCulture, out double parsed))
+                                pnl = parsed;
+                        }
+                    }
+                    catch
+                    {
+                    }
+
+                    if (!pnl.HasValue)
+                        pnl = this.EstimateOpenPnlUsd(position, null);
+
+                    if (!pnl.HasValue)
+                        continue;
+                    sum += pnl.Value;
+                    any = true;
+                }
+
+                return any ? FormatMoney(sum, account) : null;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static string FormatAccountFieldValue(object value, Account account)
+        {
+            if (value == null)
+                return "—";
+            if (value is double d)
+                return FormatMoney(d, account);
+            if (value is float f)
+                return FormatMoney(f, account);
+            if (value is decimal m)
+                return FormatMoney((double)m, account);
+            if (value is int i)
+                return FormatMoney(i, account);
+            if (double.TryParse(value.ToString(), System.Globalization.NumberStyles.Any,
+                System.Globalization.CultureInfo.InvariantCulture, out double parsed))
+                return FormatMoney(parsed, account);
+            return value.ToString();
+        }
+
+        private static string FormatMoney(double value, Account account)
+        {
+            string ccy = null;
+            try
+            {
+                ccy = account?.AccountCurrency?.Name;
+            }
+            catch
+            {
+            }
+
+            string amount = value.ToString("N2", System.Globalization.CultureInfo.InvariantCulture);
+            return string.IsNullOrEmpty(ccy) ? amount : amount + " " + ccy;
         }
 
         private void OnDrawLinesClick(string elementId, object args)
@@ -534,6 +714,8 @@ namespace TNTradePanel.Plugin
                     this.beArmed = TradeSetupHub.Current.ShowBreakEven && TradeSetupHub.Current.BreakEven.HasValue;
                 this.RefreshDrawButtonUi();
                 this.RefreshQtyUi();
+                if (this.accountInfoOpen)
+                    this.RefreshAccountInfoUi(force: false);
             }
             catch
             {
@@ -664,10 +846,15 @@ namespace TNTradePanel.Plugin
                 TradeSetupHub.Current.StopLoss = beStop;
                 TradeSetupHub.Current.StopLocked = true;
                 TradeSetupHub.Current.LockedStopFloor = beStop;
+                TradeSetupHub.Current.ShowBreakEven = false;
+                TradeSetupHub.Current.BreakEven = null;
             }
 
+            this.beArmed = false;
+            this.lastAppliedBreakEven = null;
             TradeSetupHub.NotifySetupChanged();
-            this.SetStatus("BE hit: SL → entry + " + this.beOffsetTicks + " ticks. BE line stays.");
+            this.RefreshDrawButtonUi();
+            this.SetStatus("BE hit: SL → entry + " + this.beOffsetTicks + " ticks. BE line removed.");
         }
 
         /// <summary>

@@ -6,3 +6,4 @@ obj/
 *.pdb
 _translate_*.py
 mt4_forras/
+_stage/

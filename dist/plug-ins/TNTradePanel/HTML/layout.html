@@ -30,6 +30,20 @@
                 return;
             el.className = on ? 'on' : '';
         }
+
+        function setAccountInfo(on) {
+            var panel = document.getElementById('accountinfopanel');
+            var btn = document.getElementById('accountinfobutton');
+            if (!panel || !btn)
+                return;
+            if (on) {
+                panel.className = 'account-info open';
+                btn.innerHTML = 'Account [hide]';
+            } else {
+                panel.className = 'account-info';
+                btn.innerHTML = 'Account [show]';
+            }
+        }
     </script>
     <style>
         body { margin: 0; }
@@ -62,6 +76,32 @@
             color: #111111 !important;
             font-weight: 700 !important;
         }
+        #bebutton {
+            background: #8c3cc8 !important;
+            color: #ffffff !important;
+            font-weight: 700 !important;
+        }
+        #accountinfobutton {
+            background: #2a4a6a !important;
+            color: #ffffff !important;
+        }
+        .account-info {
+            display: none;
+            font-size: 12px;
+            line-height: 1.45;
+            padding: 6px 4px;
+            background: #1a1a1a;
+            border: 1px solid #3a3a3a;
+        }
+        .account-info.open { display: block; }
+        .account-info .ai-row {
+            display: flex !important;
+            justify-content: space-between;
+            gap: 6px;
+            margin: 2px 0;
+        }
+        .account-info .ai-label { color: #9a9a9a; }
+        .account-info .ai-value { color: #f0f0f0; text-align: right; }
         #ghostwarn {
             display: none;
             font-size: 12px;
@@ -139,6 +179,16 @@
             </div>
             <div class="row">
                 <div id="statustext">Loss limit and line styles are in panel Settings.</div>
+            </div>
+            <div class="row">
+                <button type="button" id="accountinfobutton" class="login100-form-btn">Account [show]</button>
+            </div>
+            <div class="row">
+                <div id="accountinfopanel" class="account-info">
+                    <div class="ai-row"><span class="ai-label">Balance</span><span class="ai-value" id="accbalance">—</span></div>
+                    <div class="ai-row"><span class="ai-label">Cash on hand</span><span class="ai-value" id="acccash">—</span></div>
+                    <div class="ai-row"><span class="ai-label">Daily PnL</span><span class="ai-value" id="accdaypnl">—</span></div>
+                </div>
             </div>
         </panelBody>
     </panel>
