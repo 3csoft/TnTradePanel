@@ -36,6 +36,15 @@ namespace TNTradePanel.Plugin
         private System.Threading.Timer pollTimer;
 
         private double lossLimitUsd = 100;
+        private bool allowMinOneContract;
+        private double dailyMaxLossUsd;
+        private bool dailyCloseBusy;
+        /// <summary>Raised loss limit while a forced 1-contract trade is running; null = use lossLimitUsd.</summary>
+        private double? effectiveLossLimitUsd;
+        private DateTime effectiveLossLimitSetUtc;
+        private string lastLimitText;
+        /// <summary>Prefix for a successful TryEnter result that carries a status note.</summary>
+        private const string OkWithNote = "\u0001OK:";
         private Color entryLineColor = Color.FromArgb(220, 40, 160, 70);
         private Color stopLineColor = Color.FromArgb(220, 200, 40, 40);
         private Color takeProfitLineColor = Color.FromArgb(220, 220, 80, 160);
@@ -125,6 +134,20 @@ namespace TNTradePanel.Plugin
                     Minimum = 0,
                     Maximum = 200
                 });
+                result.Add(new SettingItemBoolean("AllowMinOneContract", this.allowMinOneContract)
+                {
+                    Text = "Allow 1 contract when quantity = 0 (raises loss limit for that trade)",
+                    SortIndex = 12
+                });
+                result.Add(new SettingItemDouble("DailyMaxLossUsd", this.dailyMaxLossUsd)
+                {
+                    Text = "Daily max loss (USD, 0 = off)",
+                    SortIndex = 13,
+                    Minimum = 0,
+                    Maximum = 1000000,
+                    Increment = 50,
+                    DecimalPlaces = 0
+                });
                 result.Add(new SettingItemColor("EntryLineColor", this.entryLineColor)
                 {
                     Text = "Entry line color",
@@ -175,6 +198,10 @@ namespace TNTradePanel.Plugin
                     this.lossLimitUsd = limit;
                 if (value.TryGetValue("BeOffsetTicks", out int beTicks) && beTicks >= 0)
                     this.beOffsetTicks = beTicks;
+                if (value.TryGetValue("AllowMinOneContract", out bool allowMinOne))
+                    this.allowMinOneContract = allowMinOne;
+                if (value.TryGetValue("DailyMaxLossUsd", out double dailyMax) && dailyMax >= 0)
+                    this.dailyMaxLossUsd = dailyMax;
                 if (value.GetItemByPath("EntryLineColor") is SettingItemColor entryColor)
                     this.entryLineColor = (Color)entryColor.Value;
                 if (value.GetItemByPath("StopLineColor") is SettingItemColor stopColor)
@@ -390,6 +417,60 @@ namespace TNTradePanel.Plugin
         private string TryGetAccountAdditionalValue(Account account, params string[] keys)
         {
             return this.TryGetAccountAdditionalValue(account, exactOnly: false, keys);
+        }
+
+        private double? TryGetAccountAdditionalNumber(Account account, params string[] keys)
+        {
+            if (account?.AdditionalInfo == null)
+                return null;
+
+            try
+            {
+                foreach (string key in keys)
+                {
+                    if (account.AdditionalInfo.TryGetItem(key, out AdditionalInfoItem item) && item?.Value != null)
+                        return ToDouble(item.Value);
+                }
+
+                foreach (AdditionalInfoItem item in account.AdditionalInfo)
+                {
+                    if (item?.Value == null)
+                        continue;
+                    foreach (string key in keys)
+                    {
+                        if (key.Equals(item.Id ?? string.Empty, StringComparison.OrdinalIgnoreCase)
+                            || key.Equals(item.NameKey ?? string.Empty, StringComparison.OrdinalIgnoreCase))
+                            return ToDouble(item.Value);
+                    }
+                }
+            }
+            catch
+            {
+            }
+
+            return null;
+        }
+
+        private static double? ToDouble(object value)
+        {
+            switch (value)
+            {
+                case double d: return double.IsNaN(d) || double.IsInfinity(d) ? (double?)null : d;
+                case float f: return f;
+                case decimal m: return (double)m;
+                case int i: return i;
+                case long l: return l;
+                case string s:
+                    string cleaned = new string(s.Where(c => char.IsDigit(c) || c == '-' || c == '.' || c == ',').ToArray());
+                    if (double.TryParse(cleaned, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out double inv))
+                        return inv;
+                    if (double.TryParse(cleaned, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.CurrentCulture, out double cur))
+                        return cur;
+                    return null;
+                default:
+                    try { return Convert.ToDouble(value, System.Globalization.CultureInfo.InvariantCulture); }
+                    catch { return null; }
+            }
         }
 
         private string TryFormatOpenPositionsPnl(Account account)
@@ -695,7 +776,10 @@ namespace TNTradePanel.Plugin
             try
             {
                 string error = this.TryEnter();
-                this.SetStatus(error ?? "Entry sent (TP yes, SL line virtual).");
+                if (error != null && error.StartsWith(OkWithNote, StringComparison.Ordinal))
+                    this.SetStatus(error.Substring(OkWithNote.Length));
+                else
+                    this.SetStatus(error ?? "Entry sent (TP yes, SL line virtual).");
                 this.RefreshQtyUi();
             }
             finally
@@ -715,9 +799,12 @@ namespace TNTradePanel.Plugin
             try
             {
                 this.EnforceStopRiskCap();
+                this.ReleaseEffectiveLossLimitIfFlat();
+                this.CheckDailyLossLimit();
                 this.CheckLossLimitBreach();
                 this.CheckVirtualStopTouch();
                 this.RefreshGhostOrderWarn();
+                this.RefreshLimitUi();
                 if (!TradeSetupHub.TryPull(ref this.hubSeq, out _))
                     return;
                 lock (TradeSetupHub.Sync)
@@ -756,18 +843,154 @@ namespace TNTradePanel.Plugin
             lock (TradeSetupHub.Sync)
                 setup = CloneSetup(TradeSetupHub.Current);
 
-            PositionSizeResult size = PositionSizing.Calculate(this.CurrentSymbol, setup);
+            PositionSizeResult size = this.CalculateSize(setup, out bool minOne);
             string qtyText = size.Ok
-                ? "Quantity: " + FormatQty(this.CurrentSymbol, size.Quantity)
+                ? "Quantity: " + FormatQty(this.CurrentSymbol, size.Quantity) + (minOne ? " (min)" : string.Empty)
                 : "Quantity: —";
             string rrText = size.RewardRisk > 0
                 ? "RR: " + size.RewardRisk.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture)
                 : "RR: —";
-            string limitText = "Limit: " + this.lossLimitUsd.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) + " USD";
 
-            this.Window.Browser.UpdateHtml("limittext", HtmlAction.SetInnerHtml, limitText);
+            this.lastLimitText = null;
+            this.RefreshLimitUi();
             this.Window.Browser.UpdateHtml("qtytext", HtmlAction.SetInnerHtml, qtyText);
             this.Window.Browser.UpdateHtml("rrtext", HtmlAction.SetInnerHtml, rrText);
+        }
+
+        private void RefreshLimitUi()
+        {
+            var inv = System.Globalization.CultureInfo.InvariantCulture;
+            string text = "Limit: " + this.EffectiveLossLimitUsd.ToString("0.##", inv) + " USD";
+            if (this.effectiveLossLimitUsd.HasValue)
+                text += " (1-lot)";
+
+            if (this.dailyMaxLossUsd > 0)
+            {
+                double? day = this.GetDailyPnlUsd();
+                text += "<br>Day: " + (day.HasValue ? day.Value.ToString("0.##", inv) : "—")
+                    + " / -" + this.dailyMaxLossUsd.ToString("0.##", inv);
+                if (this.IsDailyLimitReached(day))
+                    text += "<br><b style=\"color:#ff4040\">DAILY LIMIT — BLOCKED</b>";
+            }
+
+            if (text == this.lastLimitText)
+                return;
+            this.lastLimitText = text;
+            try
+            {
+                this.Window.Browser.UpdateHtml("limittext", HtmlAction.SetInnerHtml, text);
+            }
+            catch
+            {
+            }
+        }
+
+        private double EffectiveLossLimitUsd => this.effectiveLossLimitUsd ?? this.lossLimitUsd;
+
+        /// <summary>
+        /// Normal risk sizing; if it yields 0 and the setting allows it, falls back to the
+        /// smallest tradable lot (the trade's risk then exceeds the configured loss limit).
+        /// </summary>
+        private PositionSizeResult CalculateSize(TradeSetup setup, out bool minOne)
+        {
+            minOne = false;
+            PositionSizeResult size = PositionSizing.Calculate(this.CurrentSymbol, setup);
+            if (size.Ok || !this.allowMinOneContract || size.RiskPerContract <= 0 || this.CurrentSymbol == null)
+                return size;
+
+            double lot = this.CurrentSymbol.MinLot > 0
+                ? this.CurrentSymbol.MinLot
+                : (this.CurrentSymbol.LotStep > 0 ? this.CurrentSymbol.LotStep : 1.0);
+            size.Quantity = lot;
+            size.Ok = true;
+            size.Error = null;
+            minOne = true;
+            return size;
+        }
+
+        private void ReleaseEffectiveLossLimitIfFlat()
+        {
+            if (!this.effectiveLossLimitUsd.HasValue || this.currentAccount == null)
+                return;
+            // Grace period: the entry order may not be visible in Core yet right after PlaceOrder.
+            if ((DateTime.UtcNow - this.effectiveLossLimitSetUtc).TotalSeconds < 5)
+                return;
+
+            bool busy = Core.Instance.Positions.Any(p => p != null && SameAccount(p.Account, this.currentAccount))
+                || Core.Instance.Orders.Any(o => o != null && SameAccount(o.Account, this.currentAccount));
+            if (!busy)
+                this.effectiveLossLimitUsd = null;
+        }
+
+        /// <summary>
+        /// Broker Net PnL for the day; with open positions the broker's open part is swapped for
+        /// a live tick-based estimate so the check does not lag the account updates.
+        /// </summary>
+        private double? GetDailyPnlUsd(double? lastPrice = null)
+        {
+            Account account = this.currentAccount;
+            if (account == null)
+                return null;
+
+            double? net = this.TryGetAccountAdditionalNumber(account,
+                "Net PnL", "NetPnL", "Net Profit/Loss", "Net P&L", "Net Profit Loss");
+            if (!net.HasValue)
+                return null;
+
+            Position[] positions = Core.Instance.Positions
+                .Where(p => p != null && SameAccount(p.Account, account))
+                .ToArray();
+            if (positions.Length == 0)
+                return net;
+
+            double? brokerOpen = this.TryGetAccountAdditionalNumber(account,
+                "OpenProfit/Loss", "Open Profit/Loss", "Open PnL", "OpenPnL");
+            if (!brokerOpen.HasValue)
+                return net;
+
+            double liveOpen = 0;
+            foreach (Position position in positions)
+                liveOpen += this.EstimateOpenPnlUsd(position, lastPrice) ?? 0;
+
+            return net.Value - brokerOpen.Value + liveOpen;
+        }
+
+        private bool IsDailyLimitReached(double? dailyPnl)
+        {
+            return this.dailyMaxLossUsd > 0 && dailyPnl.HasValue && dailyPnl.Value <= -this.dailyMaxLossUsd;
+        }
+
+        private void CheckDailyLossLimit()
+        {
+            if (this.dailyMaxLossUsd <= 0 || this.currentAccount == null)
+                return;
+            if (this.panicBusy || this.slCloseBusy || this.lossLimitCloseBusy || this.dailyCloseBusy)
+                return;
+
+            double? day = this.GetDailyPnlUsd();
+            if (!this.IsDailyLimitReached(day))
+                return;
+
+            bool busy = Core.Instance.Positions.Any(p => p != null && SameAccount(p.Account, this.currentAccount))
+                || Core.Instance.Orders.Any(o => o != null && SameAccount(o.Account, this.currentAccount));
+            if (!busy)
+                return;
+
+            this.dailyCloseBusy = true;
+            this.panicBusy = true;
+            try
+            {
+                FlattenResult flat = this.FlattenAccount();
+                this.ResetSetupState();
+                this.SetStatus("Daily max loss hit (" + day.Value.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)
+                    + " USD) — account flat: " + flat.Closed + " positions, " + flat.Cancelled
+                    + " orders cancelled. Trading blocked.");
+            }
+            finally
+            {
+                this.panicBusy = false;
+                this.dailyCloseBusy = false;
+            }
         }
 
         private void RefreshLinkedLabels()
@@ -945,7 +1168,8 @@ namespace TNTradePanel.Plugin
         {
             if (this.panicBusy || this.slCloseBusy || this.lossLimitCloseBusy || this.currentAccount == null)
                 return;
-            if (this.lossLimitUsd <= 0)
+            double limit = this.EffectiveLossLimitUsd;
+            if (limit <= 0)
                 return;
 
             Position[] positions = Core.Instance.Positions
@@ -969,7 +1193,7 @@ namespace TNTradePanel.Plugin
                 return;
 
             // Breach when floating loss is at least the configured limit.
-            if (totalPnl > -this.lossLimitUsd)
+            if (totalPnl > -limit)
                 return;
 
             this.CloseAllOnLossLimit(totalPnl);
@@ -1100,6 +1324,10 @@ namespace TNTradePanel.Plugin
             if (this.CurrentSymbol == null || this.currentAccount == null)
                 return "Select an account and link the panel to the chart.";
 
+            if (this.IsDailyLimitReached(this.GetDailyPnlUsd()))
+                return "Daily max loss reached (" + this.dailyMaxLossUsd.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)
+                    + " USD) — trading blocked.";
+
             lock (TradeSetupHub.Sync)
             {
                 TradeSetupHub.Current.UseEntryLine = this.entryCheckOn;
@@ -1147,7 +1375,7 @@ namespace TNTradePanel.Plugin
             if (scaleError != null)
                 return scaleError;
 
-            PositionSizeResult size = PositionSizing.Calculate(this.CurrentSymbol, setup);
+            PositionSizeResult size = this.CalculateSize(setup, out bool minOne);
             if (!size.Ok)
                 return size.Error;
 
@@ -1201,6 +1429,19 @@ namespace TNTradePanel.Plugin
             }
             TradeSetupHub.NotifySetupChanged();
             this.beArmed = false;
+
+            if (minOne)
+            {
+                // Headroom of 2 ticks so slippage on the virtual SL does not trigger the limit first.
+                double tradeRisk = size.RiskPerContract * size.Quantity + 2 * size.TickCost * size.Quantity;
+                this.effectiveLossLimitUsd = Math.Max(Math.Max(this.lossLimitUsd, tradeRisk), this.effectiveLossLimitUsd ?? 0);
+                this.effectiveLossLimitSetUtc = DateTime.UtcNow;
+                this.lastLimitText = null;
+                this.RefreshLimitUi();
+                return OkWithNote + "Entry sent with minimum lot (quantity was 0). Loss limit raised to "
+                    + this.effectiveLossLimitUsd.Value.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)
+                    + " USD until flat.";
+            }
             return null;
         }
 

@@ -19,7 +19,9 @@ Watch on YouTube: [https://youtu.be/EEH_Ov1c80U](https://youtu.be/EEH_Ov1c80U)
 ## Features
 
 - **Loss limit (USD)** — sizes quantity; also an **emergency flatten** if floating loss reaches the limit (even while dragging SL).
-- **Lines** — place or clear Entry, SL, TP on the color-linked chart (indicator required).
+- **Min 1 contract (optional, off by default)** — if sizing gives quantity 0, enter with the minimum lot and temporarily raise the loss limit to that trade's risk until flat.
+- **Daily max loss (USD, 0 = off)** — once the day's PnL (broker Net PnL + live open PnL) reaches −limit, entries are blocked and the account is flattened.
+- **Lines** — place or clear Entry, SL, TP on the color-linked chart (indicator required). Each line has a wide colored tag with a round grip on the left for easy dragging.
 - **LONG / SHORT** — draw direction; opposite side blocked while a position is open.
 - **Entry on/off** — toggle Entry while SL/TP are already out; always snaps to current market.
 - **Enter** — market / limit / stop entry with TP; SL remains a **virtual line** (no protective SL order).
@@ -146,6 +148,8 @@ Indicator  (TNTradePanelLines)  ← must be on the chart for draw/drag
 
 - **Loss limit (USD)**
 - **BE hit: SL = avg entry + X ticks**
+- **Allow 1 contract when quantity = 0** (default off)
+- **Daily max loss (USD, 0 = off)**
 - Entry / SL / TP / BE **line colors**, **width**, **style** (Solid, Dash, Dot, …)
 
 ## Troubleshooting
@@ -153,7 +157,8 @@ Indicator  (TNTradePanelLines)  ← must be on the chart for draw/drag
 - **No lines / BE does nothing** — add **TN Trade Panel Lines** to the chart; status bar warns if the indicator is missing.
 - **Wrong symbol / continuous vs dated** — panel and indicator match continuous roots (e.g. `MNQ`) to dated contracts (`MNQZ6.CME`).
 - **SL widens again** — restart Quantower after updating DLLs so both plugin and indicator load the same build.
-- **Quantity: 0** — raise the loss limit or tighten SL.
+- **Quantity: 0** — raise the loss limit, tighten SL, or enable *Allow 1 contract when quantity = 0*.
+- **Daily limit shows "—"** — the broker does not publish a `Net PnL` account field; the daily limit is then inactive.
 
 ## Disclaimer
 

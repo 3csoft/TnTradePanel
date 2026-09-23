@@ -195,7 +195,7 @@ namespace TNTradePanel.Indicator
 
             if (e.Button == NativeMouseButtons.Right)
             {
-                if (this.HitTest(e.Location.Y) == DragTarget.TakeProfit)
+                if (this.HitTest(e.Location.X, e.Location.Y) == DragTarget.TakeProfit)
                 {
                     e.Handled = true;
                     lock (TradeSetupHub.Sync)
@@ -212,7 +212,7 @@ namespace TNTradePanel.Indicator
             if (e.Button != NativeMouseButtons.Left)
                 return;
 
-            this.dragging = this.HitTest(e.Location.Y);
+            this.dragging = this.HitTest(e.Location.X, e.Location.Y);
             if (this.dragging == DragTarget.None)
                 return;
 
@@ -381,11 +381,21 @@ namespace TNTradePanel.Indicator
             return dot > 0 ? name.Substring(0, dot) : name;
         }
 
-        private DragTarget HitTest(int y)
+        private DragTarget HitTest(int x, int y)
         {
             var converter = this.CurrentChart?.MainWindow?.CoordinatesConverter;
             if (converter == null)
                 return DragTarget.None;
+
+            lock (this.handleRects)
+            {
+                foreach (DragTarget target in HandleHitOrder)
+                {
+                    if (this.handleRects.TryGetValue(target, out RectangleF rect)
+                        && RectangleF.Inflate(rect, 3, 3).Contains(x, y))
+                        return target;
+                }
+            }
 
             TradeSetup setup;
             lock (TradeSetupHub.Sync)
@@ -401,6 +411,13 @@ namespace TNTradePanel.Indicator
                 return DragTarget.Stop;
             return DragTarget.None;
         }
+
+        private const float HandleHeight = 20f;
+
+        private static readonly DragTarget[] HandleHitOrder =
+            { DragTarget.BreakEven, DragTarget.TakeProfit, DragTarget.Entry, DragTarget.Stop };
+
+        private readonly Dictionary<DragTarget, RectangleF> handleRects = new Dictionary<DragTarget, RectangleF>();
 
         private static bool Near(int y, double lineY)
         {
@@ -422,6 +439,9 @@ namespace TNTradePanel.Indicator
             lock (TradeSetupHub.Sync)
                 setup = TradeSetupHub.Current;
 
+            lock (this.handleRects)
+                this.handleRects.Clear();
+
             if (!setup.LinesVisible)
                 return;
 
@@ -431,16 +451,16 @@ namespace TNTradePanel.Indicator
             try
             {
                 gr.SetClip(clip);
-                using (var font = new Font("Segoe UI", 8f, FontStyle.Regular))
+                using (var font = new Font("Segoe UI", 8.5f, FontStyle.Bold))
                 {
                     if (setup.ShowStop && setup.StopLoss.HasValue)
-                        this.DrawLevel(gr, converter, clip, font, setup.StopLoss.Value, Color.FromArgb(setup.StopColorArgb), this.BuildStopLabel(setup), setup);
+                        this.DrawLevel(gr, converter, clip, font, setup.StopLoss.Value, Color.FromArgb(setup.StopColorArgb), this.BuildStopLabel(setup), setup, DragTarget.Stop);
                     if (setup.ShowEntry && setup.Entry.HasValue)
-                        this.DrawLevel(gr, converter, clip, font, setup.Entry.Value, Color.FromArgb(setup.EntryColorArgb), "Entry", setup);
+                        this.DrawLevel(gr, converter, clip, font, setup.Entry.Value, Color.FromArgb(setup.EntryColorArgb), "Entry", setup, DragTarget.Entry);
                     if (setup.ShowTakeProfit && setup.TakeProfit.HasValue)
-                        this.DrawLevel(gr, converter, clip, font, setup.TakeProfit.Value, Color.FromArgb(setup.TakeProfitColorArgb), "TP", setup);
+                        this.DrawLevel(gr, converter, clip, font, setup.TakeProfit.Value, Color.FromArgb(setup.TakeProfitColorArgb), "TP", setup, DragTarget.TakeProfit);
                     if (setup.ShowBreakEven && setup.BreakEven.HasValue)
-                        this.DrawLevel(gr, converter, clip, font, setup.BreakEven.Value, Color.FromArgb(setup.BreakEvenColorArgb), "BE", setup);
+                        this.DrawLevel(gr, converter, clip, font, setup.BreakEven.Value, Color.FromArgb(setup.BreakEvenColorArgb), "BE", setup, DragTarget.BreakEven);
                 }
             }
             finally
@@ -496,7 +516,7 @@ namespace TNTradePanel.Indicator
             return PositionSizing.EstimateStopUsd(this.Symbol, entry, setup.StopLoss.Value, qty, direction);
         }
 
-        private void DrawLevel(Graphics gr, IChartWindowCoordinatesConverter converter, Rectangle clip, Font font, double price, Color color, string label, TradeSetup setup)
+        private void DrawLevel(Graphics gr, IChartWindowCoordinatesConverter converter, Rectangle clip, Font font, double price, Color color, string label, TradeSetup setup, DragTarget target)
         {
             float y = (float)converter.GetChartY(price);
             if (y < clip.Top - 20 || y > clip.Bottom + 20)
@@ -512,8 +532,65 @@ namespace TNTradePanel.Indicator
             string text = label.StartsWith("SL ", StringComparison.Ordinal)
                 ? label
                 : label + " " + (this.Symbol != null ? this.Symbol.FormatPrice(price) : price.ToString("0.####"));
-            using (var brush = new SolidBrush(color))
-                gr.DrawString(text, font, brush, clip.Left + 8, y - 14);
+
+            RectangleF tag = this.DrawHandle(gr, clip, font, y, color, text);
+            lock (this.handleRects)
+                this.handleRects[target] = tag;
+        }
+
+        /// <summary>Filled tag with a round grip at the left end of the line — the drag handle.</summary>
+        private RectangleF DrawHandle(Graphics gr, Rectangle clip, Font font, float y, Color color, string text)
+        {
+            SizeF textSize = gr.MeasureString(text, font);
+            float h = Math.Max(HandleHeight, textSize.Height + 4);
+            float grip = h;
+            var tag = new RectangleF(clip.Left + 4, y - h / 2, grip + textSize.Width + 8, h);
+
+            SmoothingMode oldMode = gr.SmoothingMode;
+            gr.SmoothingMode = SmoothingMode.AntiAlias;
+            try
+            {
+                Color fill = Color.FromArgb(235, color.R, color.G, color.B);
+                using (GraphicsPath path = RoundedRect(tag, h / 2))
+                using (var fillBrush = new SolidBrush(fill))
+                using (var border = new Pen(Color.FromArgb(200, 255, 255, 255), 1f))
+                {
+                    gr.FillPath(fillBrush, path);
+                    gr.DrawPath(border, path);
+                }
+
+                var circle = new RectangleF(tag.Left + 3, tag.Top + 3, grip - 6, h - 6);
+                using (var circleBrush = new SolidBrush(Color.FromArgb(230, 255, 255, 255)))
+                    gr.FillEllipse(circleBrush, circle);
+
+                using (var gripPen = new Pen(color, 1.5f))
+                {
+                    float cx = circle.Left + circle.Width / 2;
+                    float cy = circle.Top + circle.Height / 2;
+                    float half = circle.Width * 0.28f;
+                    for (int i = -1; i <= 1; i++)
+                        gr.DrawLine(gripPen, cx - half, cy + i * 3, cx + half, cy + i * 3);
+                }
+
+                using (var textBrush = new SolidBrush(Color.White))
+                    gr.DrawString(text, font, textBrush, tag.Left + grip + 2, y - textSize.Height / 2);
+            }
+            finally
+            {
+                gr.SmoothingMode = oldMode;
+            }
+
+            return tag;
+        }
+
+        private static GraphicsPath RoundedRect(RectangleF r, float radius)
+        {
+            float d = Math.Min(radius * 2, Math.Min(r.Width, r.Height));
+            var path = new GraphicsPath();
+            path.AddArc(r.Left, r.Top, d, d, 90, 180);
+            path.AddArc(r.Right - d, r.Top, d, d, 270, 180);
+            path.CloseFigure();
+            return path;
         }
 
         private static DashStyle ToDashStyle(int style)
