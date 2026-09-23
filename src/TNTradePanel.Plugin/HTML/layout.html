@@ -88,20 +88,35 @@
         .account-info {
             display: none;
             font-size: 12px;
-            line-height: 1.45;
+            line-height: 1.35;
             padding: 6px 4px;
             background: #1a1a1a;
             border: 1px solid #3a3a3a;
         }
         .account-info.open { display: block; }
         .account-info .ai-row {
-            display: flex !important;
-            justify-content: space-between;
-            gap: 6px;
-            margin: 2px 0;
+            display: block !important;
+            margin: 0 0 8px 0;
         }
-        .account-info .ai-label { color: #9a9a9a; }
-        .account-info .ai-value { color: #f0f0f0; text-align: right; }
+        .account-info .ai-row:last-child { margin-bottom: 0; }
+        .account-info .ai-label {
+            display: block !important;
+            width: 100% !important;
+            color: #9a9a9a;
+            font-size: 11px;
+            margin: 0;
+        }
+        .account-info .ai-value {
+            display: block !important;
+            width: 100% !important;
+            color: #f0f0f0;
+            font-size: 13px;
+            font-weight: 600;
+            text-align: left;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
         #ghostwarn {
             display: none;
             font-size: 12px;
@@ -123,7 +138,7 @@
     </style>
 </head>
 <body>
-    <panel class="autoHeight shadow" style="width:150px" id="panel">
+    <panel class="autoHeight shadow" style="width:170px" id="panel">
         <panelHeader draggable="true">
             <panelTitle id="window_title">
                 <linker id="linker">
@@ -187,7 +202,7 @@
                 <div id="accountinfopanel" class="account-info">
                     <div class="ai-row"><span class="ai-label">Balance</span><span class="ai-value" id="accbalance">—</span></div>
                     <div class="ai-row"><span class="ai-label">Cash on hand</span><span class="ai-value" id="acccash">—</span></div>
-                    <div class="ai-row"><span class="ai-label">Daily PnL</span><span class="ai-value" id="accdaypnl">—</span></div>
+                    <div class="ai-row"><span class="ai-label">Net PnL</span><span class="ai-value" id="accdaypnl">—</span></div>
                 </div>
             </div>
         </panelBody>

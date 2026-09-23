@@ -102,7 +102,7 @@ namespace TNTradePanel.Plugin
             };
         }
 
-        public override Size DefaultSize => new Size(180, 800);
+        public override Size DefaultSize => new Size(180, 880);
 
         public override IList<SettingItem> Settings
         {
@@ -325,14 +325,15 @@ namespace TNTradePanel.Plugin
                 {
                 }
 
-                cash = this.TryGetAccountAdditionalValue(account,
-                    "Cash on hand", "CashOnHand", "Cash on Hand", "Cash")
+                cash = this.TryGetAccountAdditionalValue(account, exactOnly: true,
+                    "Cash on hand", "CashOnHand", "Cash on Hand")
                     ?? "—";
 
-                dayPnl = this.TryGetAccountAdditionalValue(account,
-                    "Daily PnL", "Daily P&L", "Day PnL", "Day P&L", "Today PnL",
-                    "Net Daily PnL", "DailyNetPnL", "OpenPnL", "Open PnL")
-                    ?? this.TryFormatOpenPositionsPnl(account)
+                // Quantower Account Info "Net PnL" (not Open PnL / random Daily fields).
+                dayPnl = this.TryGetAccountAdditionalValue(account, exactOnly: true,
+                    "Net PnL", "NetPnL", "Net Profit/Loss", "Net P&L", "Net Profit Loss")
+                    ?? this.TryGetAccountAdditionalValue(account, exactOnly: true,
+                    "Total Profit/Loss", "Total PnL", "Daily PnL", "Day PnL")
                     ?? "—";
             }
 
@@ -341,7 +342,7 @@ namespace TNTradePanel.Plugin
             this.Window.Browser.UpdateHtml("accdaypnl", HtmlAction.SetInnerHtml, dayPnl);
         }
 
-        private string TryGetAccountAdditionalValue(Account account, params string[] keys)
+        private string TryGetAccountAdditionalValue(Account account, bool exactOnly, params string[] keys)
         {
             if (account?.AdditionalInfo == null || keys == null || keys.Length == 0)
                 return null;
@@ -367,10 +368,14 @@ namespace TNTradePanel.Plugin
                     {
                         if (string.IsNullOrWhiteSpace(key))
                             continue;
-                        if (id.Equals(key, StringComparison.OrdinalIgnoreCase)
-                            || name.Equals(key, StringComparison.OrdinalIgnoreCase)
-                            || id.IndexOf(key, StringComparison.OrdinalIgnoreCase) >= 0
-                            || name.IndexOf(key, StringComparison.OrdinalIgnoreCase) >= 0)
+                        bool exact = id.Equals(key, StringComparison.OrdinalIgnoreCase)
+                            || name.Equals(key, StringComparison.OrdinalIgnoreCase);
+                        if (exact)
+                            return FormatAccountFieldValue(item.Value, account);
+
+                        if (!exactOnly
+                            && (id.IndexOf(key, StringComparison.OrdinalIgnoreCase) >= 0
+                                || name.IndexOf(key, StringComparison.OrdinalIgnoreCase) >= 0))
                             return FormatAccountFieldValue(item.Value, account);
                     }
                 }
@@ -380,6 +385,11 @@ namespace TNTradePanel.Plugin
             }
 
             return null;
+        }
+
+        private string TryGetAccountAdditionalValue(Account account, params string[] keys)
+        {
+            return this.TryGetAccountAdditionalValue(account, exactOnly: false, keys);
         }
 
         private string TryFormatOpenPositionsPnl(Account account)
