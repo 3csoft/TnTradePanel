@@ -43,6 +43,9 @@ namespace TNTradePanel.Plugin
         private double? effectiveLossLimitUsd;
         private DateTime effectiveLossLimitSetUtc;
         private string lastLimitText;
+        private DateTime? lossBreachSinceUtc;
+        private DateTime? dailyBreachSinceUtc;
+        private const double BreachConfirmMs = 300;
         /// <summary>Prefix for a successful TryEnter result that carries a status note.</summary>
         private const string OkWithNote = "\u0001OK:";
         private Color entryLineColor = Color.FromArgb(220, 40, 160, 70);
@@ -969,6 +972,18 @@ namespace TNTradePanel.Plugin
 
             double? day = this.GetDailyPnlUsd();
             if (!this.IsDailyLimitReached(day))
+            {
+                this.dailyBreachSinceUtc = null;
+                return;
+            }
+
+            DateTime now = DateTime.UtcNow;
+            if (!this.dailyBreachSinceUtc.HasValue)
+            {
+                this.dailyBreachSinceUtc = now;
+                return;
+            }
+            if ((now - this.dailyBreachSinceUtc.Value).TotalMilliseconds < BreachConfirmMs)
                 return;
 
             bool busy = Core.Instance.Positions.Any(p => p != null && SameAccount(p.Account, this.currentAccount))
@@ -976,6 +991,7 @@ namespace TNTradePanel.Plugin
             if (!busy)
                 return;
 
+            this.dailyBreachSinceUtc = null;
             this.dailyCloseBusy = true;
             this.panicBusy = true;
             try
@@ -1194,8 +1210,22 @@ namespace TNTradePanel.Plugin
 
             // Breach when floating loss is at least the configured limit.
             if (totalPnl > -limit)
+            {
+                this.lossBreachSinceUtc = null;
+                return;
+            }
+
+            // Require the breach to persist so a single bad quote cannot flatten the account.
+            DateTime now = DateTime.UtcNow;
+            if (!this.lossBreachSinceUtc.HasValue)
+            {
+                this.lossBreachSinceUtc = now;
+                return;
+            }
+            if ((now - this.lossBreachSinceUtc.Value).TotalMilliseconds < BreachConfirmMs)
                 return;
 
+            this.lossBreachSinceUtc = null;
             this.CloseAllOnLossLimit(totalPnl);
         }
 
@@ -1205,12 +1235,15 @@ namespace TNTradePanel.Plugin
                 return null;
 
             int direction = position.Side == Side.Buy ? 1 : -1;
-            double market = lastPrice ?? 0;
+            // The position lives on the dated contract (MNQZ6) while orders go to the chart's
+            // continuous symbol (MNQ); only the chart symbol is subscribed, the dated one can hold stale quotes.
+            bool onChartSymbol = this.CurrentSymbol != null && SameSymbol(position.Symbol, this.CurrentSymbol);
+            double market = onChartSymbol ? (lastPrice ?? 0) : 0;
             if (market <= 0)
             {
                 try
                 {
-                    Symbol symbol = position.Symbol;
+                    Symbol symbol = onChartSymbol ? this.CurrentSymbol : position.Symbol;
                     if (direction > 0 && symbol.Bid > 0)
                         market = symbol.Bid;
                     else if (direction < 0 && symbol.Ask > 0)
