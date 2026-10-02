@@ -12,7 +12,7 @@ You place Entry / SL / TP lines on the chart, the panel sizes quantity from a US
 
 ### Short demo
 
-[![TN Trade Panel demo](https://img.youtube.com/vi/sMG_ZUogGO0/hqdefault.jpg)](https://youtu.be/sMG_ZUogGO0)
+[![TN Trade Panel demo](docs/demo-cover.jpg)](https://youtu.be/sMG_ZUogGO0)
 
 Watch on YouTube: [https://youtu.be/sMG_ZUogGO0](https://youtu.be/sMG_ZUogGO0)
 
