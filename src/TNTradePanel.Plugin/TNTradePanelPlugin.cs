@@ -28,6 +28,7 @@ namespace TNTradePanel.Plugin
         private bool lossLimitCloseBusy;
         private bool entryCheckOn = true;
         private bool accountInfoOpen;
+        private bool scalpingOn;
         private bool? lastGhostWarnVisible;
         private int hubSeq;
         private int nextDrawDirection = 1;
@@ -114,7 +115,7 @@ namespace TNTradePanel.Plugin
             };
         }
 
-        public override Size DefaultSize => new Size(180, 880);
+        public override Size DefaultSize => new Size(180, 910);
 
         public override IList<SettingItem> Settings
         {
@@ -132,7 +133,7 @@ namespace TNTradePanel.Plugin
                 });
                 result.Add(new SettingItemInteger("BeOffsetTicks", this.beOffsetTicks)
                 {
-                    Text = "BE hit: SL = avg entry + X ticks",
+                    Text = "BE hit: SL = avg entry + X ticks (also scalping SL offset)",
                     SortIndex = 11,
                     Minimum = 0,
                     Maximum = 200
@@ -233,6 +234,7 @@ namespace TNTradePanel.Plugin
             this.Window.Browser.AddEventHandler("shortbutton", "onclick", this.OnShortClick);
             this.Window.Browser.AddEventHandler("entrytoggle", "onclick", this.OnEntryToggleClick);
             this.Window.Browser.AddEventHandler("bebutton", "onclick", this.OnBeClick);
+            this.Window.Browser.AddEventHandler("scalpbutton", "onclick", this.OnScalpClick);
             this.Window.Browser.AddEventHandler("enterbutton", "onclick", this.OnEnterClick);
             this.Window.Browser.AddEventHandler("panicbutton", "onclick", this.OnPanicClick);
             this.Window.Browser.AddEventHandler("accountinfobutton", "onclick", this.OnAccountInfoToggle);
@@ -245,6 +247,7 @@ namespace TNTradePanel.Plugin
             this.RefreshEntryToggleUi();
             this.RefreshDirectionUi();
             this.RefreshDrawButtonUi();
+            this.RefreshScalpUi();
             this.RefreshQtyUi();
             this.RefreshAccountInfoUi(force: true);
             this.SetStatus("Select an account and add TN Trade Panel Lines to the chart.");
@@ -771,6 +774,33 @@ namespace TNTradePanel.Plugin
                 + this.beOffsetTicks + " ticks.");
         }
 
+        private void OnScalpClick(string elementId, object args)
+        {
+            this.scalpingOn = !this.scalpingOn;
+            this.PublishVisualSettings();
+            this.RefreshScalpUi();
+
+            if (!this.scalpingOn)
+                this.SetStatus("Scalping: off — SL trailing stopped.");
+            else if (TradeSetupHub.LineListeners <= 0)
+                this.SetStatus("Scalping: on — but no indicator on the chart. Add: TN Trade Panel Lines.");
+            else
+                this.SetStatus("Scalping: on — in profit, SL trails below broken red candles (above green for short) − "
+                    + this.beOffsetTicks + " ticks.");
+        }
+
+        private void RefreshScalpUi()
+        {
+            try
+            {
+                this.Window.Browser.UpdateHtml(string.Empty, HtmlAction.InvokeJs,
+                    this.scalpingOn ? "setScalp(true)" : "setScalp(false)");
+            }
+            catch
+            {
+            }
+        }
+
         private void OnEnterClick(string elementId, object args)
         {
             if (this.enterBusy)
@@ -808,10 +838,23 @@ namespace TNTradePanel.Plugin
                 this.CheckVirtualStopTouch();
                 this.RefreshGhostOrderWarn();
                 this.RefreshLimitUi();
-                if (!TradeSetupHub.TryPull(ref this.hubSeq, out _))
+                if (!TradeSetupHub.TryPull(ref this.hubSeq, out string command))
                     return;
+                bool scalpStale;
+                double? stop;
                 lock (TradeSetupHub.Sync)
+                {
                     this.beArmed = TradeSetupHub.Current.ShowBreakEven && TradeSetupHub.Current.BreakEven.HasValue;
+                    // A payload posted by the indicator before it saw a toggle carries the old value.
+                    scalpStale = TradeSetupHub.Current.ScalpingOn != this.scalpingOn
+                        || TradeSetupHub.Current.ScalpOffsetTicks != this.beOffsetTicks;
+                    stop = TradeSetupHub.Current.StopLoss;
+                }
+                if (scalpStale)
+                    this.PublishVisualSettings();
+                if (command == TradeSetupHub.ScalpStopCommand && this.scalpingOn && stop.HasValue)
+                    this.SetStatus("Scalp: SL → " + (this.CurrentSymbol?.FormatPrice(stop.Value)
+                        ?? stop.Value.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture)));
                 this.RefreshDrawButtonUi();
                 this.RefreshQtyUi();
                 if (this.accountInfoOpen)
@@ -833,6 +876,8 @@ namespace TNTradePanel.Plugin
                 TradeSetupHub.Current.BreakEvenColorArgb = this.breakEvenLineColor.ToArgb();
                 TradeSetupHub.Current.LineWidth = this.lineWidth;
                 TradeSetupHub.Current.LineStyle = this.lineStyle;
+                TradeSetupHub.Current.ScalpingOn = this.scalpingOn;
+                TradeSetupHub.Current.ScalpOffsetTicks = this.beOffsetTicks;
             }
             TradeSetupHub.NotifySetupChanged();
         }
@@ -1094,7 +1139,7 @@ namespace TNTradePanel.Plugin
                 TradeSetupHub.Current.ShowStop = true;
                 TradeSetupHub.Current.StopLoss = beStop;
                 TradeSetupHub.Current.StopLocked = true;
-                TradeSetupHub.Current.LockedStopFloor = beStop;
+                // Widen limit stays the stop captured at the last entry; BE only moves the line.
                 TradeSetupHub.Current.ShowBreakEven = false;
                 TradeSetupHub.Current.BreakEven = null;
             }
@@ -1107,7 +1152,7 @@ namespace TNTradePanel.Plugin
         }
 
         /// <summary>
-        /// Indicator snaps SL on DROP; panel also enforces initial risk if that misses
+        /// Indicator snaps SL on DROP; panel also enforces the last-entry stop if that misses
         /// (e.g. continuous contract chart). Skips while dragging.
         /// </summary>
         private void EnforceStopRiskCap()
@@ -1124,16 +1169,13 @@ namespace TNTradePanel.Plugin
                 if (setup.Dragging || !setup.StopLocked || !setup.ShowStop || !setup.StopLoss.HasValue)
                     return;
 
-                double ticks = setup.LockedStopTicks;
-                if (ticks <= 0)
+                int direction = position.Side == Side.Buy ? 1 : -1;
+                double? max = PositionSizing.WidestLockedStop(
+                    this.CurrentSymbol, position.OpenPrice, direction, setup.LockedStopTicks, setup.LockedStopFloor);
+                if (!max.HasValue)
                     return;
 
-                int direction = position.Side == Side.Buy ? 1 : -1;
-                double max = direction > 0
-                    ? position.OpenPrice - ticks * tick
-                    : position.OpenPrice + ticks * tick;
-                capped = PositionSizing.RoundToTick(this.CurrentSymbol, max);
-
+                capped = max.Value;
                 bool widened = direction > 0
                     ? setup.StopLoss.Value < capped - tick * 0.5
                     : setup.StopLoss.Value > capped + tick * 0.5;
@@ -1144,7 +1186,7 @@ namespace TNTradePanel.Plugin
             }
 
             TradeSetupHub.NotifySetupChanged();
-            this.SetStatus("SL restored to initial risk: "
+            this.SetStatus("SL restored to entry stop: "
                 + (this.CurrentSymbol?.FormatPrice(capped) ?? capped.ToString("0.####")));
         }
 
@@ -1766,7 +1808,9 @@ namespace TNTradePanel.Plugin
                 StopLocked = source.StopLocked,
                 LockedStopFloor = source.LockedStopFloor,
                 LockedStopTicks = source.LockedStopTicks,
-                DrawDirection = source.DrawDirection
+                DrawDirection = source.DrawDirection,
+                ScalpingOn = source.ScalpingOn,
+                ScalpOffsetTicks = source.ScalpOffsetTicks
             };
         }
     }

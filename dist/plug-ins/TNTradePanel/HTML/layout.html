@@ -31,6 +31,14 @@
             el.className = on ? 'on' : '';
         }
 
+        function setScalp(on) {
+            var btn = document.getElementById('scalpbutton');
+            if (!btn)
+                return;
+            btn.className = on ? 'login100-form-btn scalp-on' : 'login100-form-btn scalp-off';
+            btn.innerHTML = on ? 'Scalping: on' : 'Scalping: off';
+        }
+
         function setAccountInfo(on) {
             var panel = document.getElementById('accountinfopanel');
             var btn = document.getElementById('accountinfobutton');
@@ -78,6 +86,12 @@
         }
         #bebutton {
             background: #8c3cc8 !important;
+            color: #ffffff !important;
+            font-weight: 700 !important;
+        }
+        #scalpbutton.scalp-off { background: #6a6a6a !important; color: #e8e8e8 !important; }
+        #scalpbutton.scalp-on {
+            background: #0a7ea4 !important;
             color: #ffffff !important;
             font-weight: 700 !important;
         }
@@ -182,6 +196,9 @@
             </div>
             <div class="row">
                 <button type="button" id="bebutton" class="login100-form-btn">BE line</button>
+            </div>
+            <div class="row">
+                <button type="button" id="scalpbutton" class="login100-form-btn scalp-off">Scalping: off</button>
             </div>
             <div class="row">
                 <button type="button" id="enterbutton" class="login100-form-btn">Enter</button>

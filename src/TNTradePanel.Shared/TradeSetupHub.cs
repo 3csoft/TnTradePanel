@@ -11,6 +11,7 @@ namespace TNTradePanel.Shared
         public const string ClearLinesCommand = "ClearLines";
         public const string OrientCommand = "Orient";
         public const string SetupCommand = "Setup";
+        public const string ScalpStopCommand = "ScalpStop";
 
         private const string SeqKey = "TNTradePanel.Hub.Seq";
         private const string CmdKey = "TNTradePanel.Hub.Cmd";
@@ -48,6 +49,9 @@ namespace TNTradePanel.Shared
         public static void RequestOrient() => Post(OrientCommand);
 
         public static void NotifySetupChanged() => Post(SetupCommand);
+
+        /// <summary>Setup change caused by the scalping trail (SL moved).</summary>
+        public static void NotifyScalpStop() => Post(ScalpStopCommand);
 
         public static bool TryPull(ref int lastSeq, out string command)
         {
@@ -109,6 +113,8 @@ namespace TNTradePanel.Shared
             to.LockedStopTicks = from.LockedStopTicks;
             to.DrawDirection = from.DrawDirection;
             to.Dragging = from.Dragging;
+            to.ScalpingOn = from.ScalpingOn;
+            to.ScalpOffsetTicks = from.ScalpOffsetTicks;
         }
 
         private static string Format(TradeSetup setup)
@@ -136,7 +142,9 @@ namespace TNTradePanel.Shared
                 "lf=" + FormatNum(setup.LockedStopFloor),
                 "lt=" + setup.LockedStopTicks.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 "dd=" + setup.DrawDirection.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                "dg=" + (setup.Dragging ? "1" : "0"));
+                "dg=" + (setup.Dragging ? "1" : "0"),
+                "sc=" + (setup.ScalpingOn ? "1" : "0"),
+                "so=" + setup.ScalpOffsetTicks.ToString(System.Globalization.CultureInfo.InvariantCulture));
         }
 
         private static TradeSetup Parse(string payload)
@@ -225,6 +233,13 @@ namespace TNTradePanel.Shared
                         break;
                     case "dg":
                         setup.Dragging = value == "1";
+                        break;
+                    case "sc":
+                        setup.ScalpingOn = value == "1";
+                        break;
+                    case "so":
+                        if (int.TryParse(value, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out int scalpTicks))
+                            setup.ScalpOffsetTicks = Math.Max(0, scalpTicks);
                         break;
                 }
             }
