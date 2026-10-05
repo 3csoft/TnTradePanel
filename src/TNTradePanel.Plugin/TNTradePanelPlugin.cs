@@ -1,5 +1,6 @@
 using System.Collections;
 using System.Drawing;
+using System.IO;
 using System.Linq;
 using System.Net;
 using System.Text;
@@ -46,9 +47,17 @@ namespace TNTradePanel.Plugin
         private string lastLimitText;
         private DateTime? lossBreachSinceUtc;
         private DateTime? dailyBreachSinceUtc;
+        private DateTime? lockOutConfirmUntilUtc;
+        private string lastLockOutUiState;
         private const double BreachConfirmMs = 300;
+        private const int LockOutConfirmSeconds = 8;
         /// <summary>Prefix for a successful TryEnter result that carries a status note.</summary>
         private const string OkWithNote = "\u0001OK:";
+        private static readonly object LockOutFileSync = new object();
+        private static readonly string LockOutStorePath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "TNTradePanel",
+            "daily-lockouts.txt");
         private Color entryLineColor = Color.FromArgb(220, 40, 160, 70);
         private Color stopLineColor = Color.FromArgb(220, 200, 40, 40);
         private Color takeProfitLineColor = Color.FromArgb(220, 220, 80, 160);
@@ -115,7 +124,7 @@ namespace TNTradePanel.Plugin
             };
         }
 
-        public override Size DefaultSize => new Size(180, 910);
+        public override Size DefaultSize => new Size(180, 960);
 
         public override IList<SettingItem> Settings
         {
@@ -238,6 +247,7 @@ namespace TNTradePanel.Plugin
             this.Window.Browser.AddEventHandler("enterbutton", "onclick", this.OnEnterClick);
             this.Window.Browser.AddEventHandler("panicbutton", "onclick", this.OnPanicClick);
             this.Window.Browser.AddEventHandler("accountinfobutton", "onclick", this.OnAccountInfoToggle);
+            this.Window.Browser.AddEventHandler("lockoutbutton", "onclick", this.OnLockOutClick);
 
             this.RegisterService<LinkingPluginService>();
             this.pollTimer = new System.Threading.Timer(_ => this.PollHub(), null, 250, 250);
@@ -250,6 +260,7 @@ namespace TNTradePanel.Plugin
             this.RefreshScalpUi();
             this.RefreshQtyUi();
             this.RefreshAccountInfoUi(force: true);
+            this.RefreshLockOutUi(force: true);
             this.SetStatus("Select an account and add TN Trade Panel Lines to the chart.");
         }
 
@@ -320,7 +331,12 @@ namespace TNTradePanel.Plugin
 
             this.RefreshLinkedLabels();
             this.RefreshAccountInfoUi(force: true);
-            this.SetStatus("Account: " + selected.Name);
+            this.lockOutConfirmUntilUtc = null;
+            this.RefreshLockOutUi(force: true);
+            if (this.IsTradingLockedOut())
+                this.SetStatus("Account locked out for today — trading blocked.");
+            else
+                this.SetStatus("Account: " + selected.Name);
         }
 
         private void OnAccountInfoToggle(string elementId, object args)
@@ -827,6 +843,38 @@ namespace TNTradePanel.Plugin
             this.SetStatus(error ?? "Panic: positions and pendings closed.");
         }
 
+        private void OnLockOutClick(string elementId, object args)
+        {
+            if (this.currentAccount == null)
+            {
+                this.SetStatus("Select an account first.");
+                return;
+            }
+
+            if (this.IsTradingLockedOut())
+            {
+                this.RefreshLockOutUi(force: true);
+                this.SetStatus("Already locked out for this account today.");
+                return;
+            }
+
+            DateTime now = DateTime.UtcNow;
+            if (!this.lockOutConfirmUntilUtc.HasValue || now > this.lockOutConfirmUntilUtc.Value)
+            {
+                this.lockOutConfirmUntilUtc = now.AddSeconds(LockOutConfirmSeconds);
+                this.RefreshLockOutUi(force: true);
+                this.SetStatus("Really lock out trading for this account for the rest of today? Press again to confirm.");
+                return;
+            }
+
+            this.lockOutConfirmUntilUtc = null;
+            this.PersistLockOut(this.currentAccount, DateTime.Today);
+            this.lastLimitText = null;
+            this.RefreshLockOutUi(force: true);
+            this.RefreshLimitUi();
+            this.SetStatus("LOCKED OUT — no panel trading for this account until tomorrow.");
+        }
+
         private void PollHub()
         {
             try
@@ -838,6 +886,7 @@ namespace TNTradePanel.Plugin
                 this.CheckVirtualStopTouch();
                 this.RefreshGhostOrderWarn();
                 this.RefreshLimitUi();
+                this.RefreshLockOutUi(force: false);
                 if (!TradeSetupHub.TryPull(ref this.hubSeq, out string command))
                     return;
                 bool scalpStale;
@@ -920,6 +969,9 @@ namespace TNTradePanel.Plugin
                 if (this.IsDailyLimitReached(day))
                     text += "<br><b style=\"color:#ff4040\">DAILY LIMIT — BLOCKED</b>";
             }
+
+            if (this.IsTradingLockedOut())
+                text += "<br><b style=\"color:#ff4040\">LOCK OUT — TODAY</b>";
 
             if (text == this.lastLimitText)
                 return;
@@ -1399,6 +1451,9 @@ namespace TNTradePanel.Plugin
             if (this.CurrentSymbol == null || this.currentAccount == null)
                 return "Select an account and link the panel to the chart.";
 
+            if (this.IsTradingLockedOut())
+                return "Lock Out active for this account today — trading blocked.";
+
             if (this.IsDailyLimitReached(this.GetDailyPnlUsd()))
                 return "Daily max loss reached (" + this.dailyMaxLossUsd.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)
                     + " USD) — trading blocked.";
@@ -1735,6 +1790,118 @@ namespace TNTradePanel.Plugin
             }
 
             return null;
+        }
+
+        private void RefreshLockOutUi(bool force)
+        {
+            if (this.lockOutConfirmUntilUtc.HasValue && DateTime.UtcNow > this.lockOutConfirmUntilUtc.Value)
+                this.lockOutConfirmUntilUtc = null;
+
+            string state = this.IsTradingLockedOut()
+                ? "locked"
+                : (this.lockOutConfirmUntilUtc.HasValue ? "confirm" : "idle");
+            if (!force && state == this.lastLockOutUiState)
+                return;
+
+            this.lastLockOutUiState = state;
+            try
+            {
+                this.Window.Browser.UpdateHtml(string.Empty, HtmlAction.InvokeJs,
+                    "setLockOut('" + state + "')");
+            }
+            catch
+            {
+            }
+        }
+
+        private bool IsTradingLockedOut()
+        {
+            return this.IsTradingLockedOut(this.currentAccount, DateTime.Today);
+        }
+
+        private bool IsTradingLockedOut(Account account, DateTime localDay)
+        {
+            string key = LockOutKey(account, localDay);
+            if (key == null)
+                return false;
+            return this.ReadLockOutKeys().Contains(key);
+        }
+
+        private void PersistLockOut(Account account, DateTime localDay)
+        {
+            string key = LockOutKey(account, localDay);
+            if (key == null)
+                return;
+
+            lock (LockOutFileSync)
+            {
+                HashSet<string> keys = this.ReadLockOutKeysUnlocked();
+                if (!keys.Add(key))
+                    return;
+                this.WriteLockOutKeysUnlocked(keys);
+            }
+        }
+
+        private HashSet<string> ReadLockOutKeys()
+        {
+            lock (LockOutFileSync)
+                return this.ReadLockOutKeysUnlocked();
+        }
+
+        private HashSet<string> ReadLockOutKeysUnlocked()
+        {
+            var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                if (!File.Exists(LockOutStorePath))
+                    return keys;
+
+                string today = FormatLockOutDay(DateTime.Today);
+                foreach (string line in File.ReadAllLines(LockOutStorePath))
+                {
+                    if (string.IsNullOrWhiteSpace(line))
+                        continue;
+                    // Drop expired days so the file does not grow forever.
+                    if (!line.EndsWith("|" + today, StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    keys.Add(line.Trim());
+                }
+            }
+            catch
+            {
+            }
+
+            return keys;
+        }
+
+        private void WriteLockOutKeysUnlocked(HashSet<string> keys)
+        {
+            try
+            {
+                string dir = Path.GetDirectoryName(LockOutStorePath);
+                if (!string.IsNullOrEmpty(dir))
+                    Directory.CreateDirectory(dir);
+                File.WriteAllLines(LockOutStorePath, keys.OrderBy(k => k, StringComparer.OrdinalIgnoreCase));
+            }
+            catch
+            {
+            }
+        }
+
+        private static string LockOutKey(Account account, DateTime localDay)
+        {
+            if (account == null)
+                return null;
+            string connection = string.IsNullOrEmpty(account.ConnectionId) ? "_" : account.ConnectionId;
+            string id = !string.IsNullOrEmpty(account.Id) ? account.Id : account.Name;
+            if (string.IsNullOrEmpty(id))
+                return null;
+            return connection + "|" + id + "|" + FormatLockOutDay(localDay);
+        }
+
+        private static string FormatLockOutDay(DateTime localDay)
+        {
+            return localDay.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
         }
 
         private static bool SameSymbol(Symbol a, Symbol b)

@@ -52,6 +52,22 @@
                 btn.innerHTML = 'Account [show]';
             }
         }
+
+        function setLockOut(state) {
+            var btn = document.getElementById('lockoutbutton');
+            if (!btn)
+                return;
+            if (state === 'locked') {
+                btn.className = 'login100-form-btn lockout-locked';
+                btn.innerHTML = 'LOCKED OUT';
+            } else if (state === 'confirm') {
+                btn.className = 'login100-form-btn lockout-confirm';
+                btn.innerHTML = 'Really lock out?';
+            } else {
+                btn.className = 'login100-form-btn lockout-idle';
+                btn.innerHTML = 'Lock Out';
+            }
+        }
     </script>
     <style>
         body { margin: 0; }
@@ -98,6 +114,30 @@
         #accountinfobutton {
             background: #2a4a6a !important;
             color: #ffffff !important;
+        }
+        .lockout-sep {
+            margin-top: 18px !important;
+            padding-top: 10px;
+            border-top: 2px solid #5a2020;
+        }
+        #lockoutbutton.lockout-idle {
+            background: #4a1010 !important;
+            color: #ffb0b0 !important;
+            font-weight: 700 !important;
+            border: 1px solid #8a3030 !important;
+        }
+        #lockoutbutton.lockout-confirm {
+            background: #c02828 !important;
+            color: #ffffff !important;
+            font-weight: 700 !important;
+            border: 1px solid #ff6060 !important;
+        }
+        #lockoutbutton.lockout-locked {
+            background: #2a0808 !important;
+            color: #ff4040 !important;
+            font-weight: 700 !important;
+            border: 1px solid #ff2020 !important;
+            letter-spacing: 0.04em;
         }
         .account-info {
             display: none;
@@ -221,6 +261,9 @@
                     <div class="ai-row"><span class="ai-label">Cash on hand</span><span class="ai-value" id="acccash">—</span></div>
                     <div class="ai-row"><span class="ai-label">Net PnL</span><span class="ai-value" id="accdaypnl">—</span></div>
                 </div>
+            </div>
+            <div class="row lockout-sep">
+                <button type="button" id="lockoutbutton" class="login100-form-btn lockout-idle">Lock Out</button>
             </div>
         </panelBody>
     </panel>

@@ -30,6 +30,7 @@ Watch on YouTube: [https://youtu.be/sMG_ZUogGO0](https://youtu.be/sMG_ZUogGO0)
 - **BE line** — purple button; with an open position, drag into place; on touch, SL moves to avg entry ± offset ticks and the BE line is removed.
 - **Scale-in** — only allowed when SL is already at/beyond prior entry (no open risk).
 - **Panic** — close everything on the account and reset line state.
+- **Lock Out** — confirm once; blocks panel entries for the selected account (that connection) for the rest of the local day. Survives Quantower restart; clears tomorrow.
 - **Ghost-order warning** — flashing alert under Panic when the account has no position but leftover working orders.
 - **Account panel** — bottom toggle shows Balance, Cash on hand, and Daily PnL.
 - **Line style** — colors, width, dash style in Settings.
