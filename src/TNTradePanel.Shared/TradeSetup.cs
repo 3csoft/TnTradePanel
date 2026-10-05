@@ -29,15 +29,20 @@ namespace TNTradePanel.Shared
         /// <summary>Direction for next line placement: 1 long, -1 short.</summary>
         public int DrawDirection { get; set; } = 1;
 
-        /// <summary>After entry, SL cannot widen beyond initial risk.</summary>
+        /// <summary>After entry, SL cannot widen beyond the stop captured at the last entry.</summary>
         public bool StopLocked { get; set; }
-        /// <summary>Initial SL price (reference).</summary>
+        /// <summary>Stop price captured at the last entry. A new entry overwrites it.</summary>
         public double? LockedStopFloor { get; set; }
-        /// <summary>Initial risk in ticks from average entry.</summary>
+        /// <summary>Stop distance in ticks from the entry price used at the last lock.</summary>
         public double LockedStopTicks { get; set; }
 
         /// <summary>True while a chart line is being dragged (panel must not correct).</summary>
         public bool Dragging { get; set; }
+
+        /// <summary>Candle-based SL trailing (indicator moves SL past broken counter-candle groups).</summary>
+        public bool ScalpingOn { get; set; }
+        /// <summary>Ticks beyond the counter-candle group extreme for the scalping SL.</summary>
+        public int ScalpOffsetTicks { get; set; } = 4;
 
         /// <summary>Use Entry line price only when the line is actually visible (cleared after entry).</summary>
         public bool HasEntryLine =>
@@ -95,20 +100,18 @@ namespace TNTradePanel.Shared
             this.TakeProfit = null;
         }
 
+        /// <summary>
+        /// Locks the widen limit to the SL that is set right now.
+        /// A later entry (scale-in) overwrites that baseline — the new distance is wherever the SL stands.
+        /// </summary>
         public void LockStopAtCurrent(double? entry = null, double tickSize = 0)
         {
             if (!this.ShowStop || !this.StopLoss.HasValue)
                 return;
-            bool wasLocked = this.StopLocked;
             this.StopLocked = true;
-            if (!wasLocked)
-                this.LockedStopFloor = this.StopLoss.Value;
+            this.LockedStopFloor = this.StopLoss.Value;
             if (entry.HasValue && entry.Value > 0 && tickSize > 0)
-            {
-                double ticks = Math.Abs(this.StopLoss.Value - entry.Value) / tickSize;
-                // On scale-in risk must never grow: keep the tighter value.
-                this.LockedStopTicks = this.LockedStopTicks > 0 ? Math.Min(this.LockedStopTicks, ticks) : ticks;
-            }
+                this.LockedStopTicks = Math.Abs(this.StopLoss.Value - entry.Value) / tickSize;
         }
     }
 }

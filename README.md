@@ -12,9 +12,9 @@ You place Entry / SL / TP lines on the chart, the panel sizes quantity from a US
 
 ### Short demo
 
-[![TN Trade Panel demo](https://img.youtube.com/vi/EEH_Ov1c80U/hqdefault.jpg)](https://youtu.be/EEH_Ov1c80U)
+[![TN Trade Panel demo](docs/demo-cover.jpg)](https://youtu.be/sMG_ZUogGO0)
 
-Watch on YouTube: [https://youtu.be/EEH_Ov1c80U](https://youtu.be/EEH_Ov1c80U)
+Watch on YouTube: [https://youtu.be/sMG_ZUogGO0](https://youtu.be/sMG_ZUogGO0)
 
 ## Features
 
@@ -26,10 +26,11 @@ Watch on YouTube: [https://youtu.be/EEH_Ov1c80U](https://youtu.be/EEH_Ov1c80U)
 - **Entry on/off** — toggle Entry while SL/TP are already out; always snaps to current market.
 - **Enter** — market / limit / stop entry with TP; SL remains a **virtual line** (no protective SL order).
 - **Virtual SL** — when price touches the SL line, **all positions and orders** on the selected account are flattened.
-- **SL risk lock** — after entry, SL cannot widen beyond initial risk from average entry (snaps back on drop).
+- **SL risk lock** — after entry, SL cannot widen beyond the stop captured at that entry (snaps back on drop). A scale-in overwrites the baseline with wherever the SL stands at the new entry.
 - **BE line** — purple button; with an open position, drag into place; on touch, SL moves to avg entry ± offset ticks and the BE line is removed.
 - **Scale-in** — only allowed when SL is already at/beyond prior entry (no open risk).
 - **Panic** — close everything on the account and reset line state.
+- **Lock Out** — confirm once; blocks panel entries for the selected account (that connection) for the rest of the local day. Survives Quantower restart; clears tomorrow.
 - **Ghost-order warning** — flashing alert under Panic when the account has no position but leftover working orders.
 - **Account panel** — bottom toggle shows Balance, Cash on hand, and Daily PnL.
 - **Line style** — colors, width, dash style in Settings.
@@ -38,7 +39,7 @@ Built-in chart Order Entry is not modified.
 
 ## Requirements
 
-- Quantower **v1.146+** (built against v1.146.18)
+- Quantower **v1.146+** (built against v1.146.17)
 - Linked chart **symbol** and a selected **account**
 - Indicator **TN Trade Panel Lines** on the same (or color-linked) chart
 - .NET 10 SDK only if you build from source
@@ -108,8 +109,8 @@ git commit -m "chore: refresh dist binaries for release"
 | Property | Default | Purpose |
 | --- | --- | --- |
 | `QuantowerRoot` | `C:\Quantower` | Quantower install root |
-| `QuantowerVersion` | `v1.146.18` | Platform folder under `TradingPlatform\` |
-| `QuantowerBin` | `...\TradingPlatform\v1.146.18\bin` | Reference assemblies |
+| `QuantowerVersion` | `v1.146.17` | Platform folder under `TradingPlatform\` |
+| `QuantowerBin` | `...\TradingPlatform\v1.146.17\bin` | Reference assemblies |
 | `QuantowerScripts` | `...\Settings\Scripts` | Plugin / indicator output |
 
 Override via MSBuild properties or by editing [`Directory.Build.props`](Directory.Build.props).

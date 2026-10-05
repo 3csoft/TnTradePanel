@@ -197,6 +197,31 @@ namespace TNTradePanel.Shared
             return symbol.Last;
         }
 
+        /// <summary>
+        /// Furthest stop still inside the lock. Long: lowest price. Short: highest.
+        /// Uses the stop captured at the last entry and the tick distance from average entry; the tighter one wins.
+        /// </summary>
+        public static double? WidestLockedStop(Symbol symbol, double averageEntry, int direction, double lockedTicks, double? lockedFloor)
+        {
+            if (direction == 0)
+                return null;
+
+            double tick = symbol != null && symbol.TickSize > 0 ? symbol.TickSize : 0.25;
+            double? fromTicks = null;
+            if (lockedTicks > 0 && averageEntry > 0)
+            {
+                double raw = direction > 0
+                    ? averageEntry - lockedTicks * tick
+                    : averageEntry + lockedTicks * tick;
+                fromTicks = RoundToTick(symbol, raw);
+            }
+
+            double? fromFloor = lockedFloor.HasValue ? RoundToTick(symbol, lockedFloor.Value) : (double?)null;
+            if (fromTicks.HasValue && fromFloor.HasValue)
+                return direction > 0 ? Math.Max(fromTicks.Value, fromFloor.Value) : Math.Min(fromTicks.Value, fromFloor.Value);
+            return fromTicks ?? fromFloor;
+        }
+
         public static double RoundToTick(Symbol symbol, double price)
         {
             if (symbol == null)

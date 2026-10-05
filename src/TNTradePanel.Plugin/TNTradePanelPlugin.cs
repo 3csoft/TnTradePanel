@@ -1,5 +1,6 @@
 using System.Collections;
 using System.Drawing;
+using System.IO;
 using System.Linq;
 using System.Net;
 using System.Text;
@@ -28,6 +29,7 @@ namespace TNTradePanel.Plugin
         private bool lossLimitCloseBusy;
         private bool entryCheckOn = true;
         private bool accountInfoOpen;
+        private bool scalpingOn;
         private bool? lastGhostWarnVisible;
         private int hubSeq;
         private int nextDrawDirection = 1;
@@ -45,9 +47,17 @@ namespace TNTradePanel.Plugin
         private string lastLimitText;
         private DateTime? lossBreachSinceUtc;
         private DateTime? dailyBreachSinceUtc;
+        private DateTime? lockOutConfirmUntilUtc;
+        private string lastLockOutUiState;
         private const double BreachConfirmMs = 300;
+        private const int LockOutConfirmSeconds = 8;
         /// <summary>Prefix for a successful TryEnter result that carries a status note.</summary>
         private const string OkWithNote = "\u0001OK:";
+        private static readonly object LockOutFileSync = new object();
+        private static readonly string LockOutStorePath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "TNTradePanel",
+            "daily-lockouts.txt");
         private Color entryLineColor = Color.FromArgb(220, 40, 160, 70);
         private Color stopLineColor = Color.FromArgb(220, 200, 40, 40);
         private Color takeProfitLineColor = Color.FromArgb(220, 220, 80, 160);
@@ -114,7 +124,7 @@ namespace TNTradePanel.Plugin
             };
         }
 
-        public override Size DefaultSize => new Size(180, 880);
+        public override Size DefaultSize => new Size(180, 960);
 
         public override IList<SettingItem> Settings
         {
@@ -132,7 +142,7 @@ namespace TNTradePanel.Plugin
                 });
                 result.Add(new SettingItemInteger("BeOffsetTicks", this.beOffsetTicks)
                 {
-                    Text = "BE hit: SL = avg entry + X ticks",
+                    Text = "BE hit: SL = avg entry + X ticks (also scalping SL offset)",
                     SortIndex = 11,
                     Minimum = 0,
                     Maximum = 200
@@ -233,9 +243,11 @@ namespace TNTradePanel.Plugin
             this.Window.Browser.AddEventHandler("shortbutton", "onclick", this.OnShortClick);
             this.Window.Browser.AddEventHandler("entrytoggle", "onclick", this.OnEntryToggleClick);
             this.Window.Browser.AddEventHandler("bebutton", "onclick", this.OnBeClick);
+            this.Window.Browser.AddEventHandler("scalpbutton", "onclick", this.OnScalpClick);
             this.Window.Browser.AddEventHandler("enterbutton", "onclick", this.OnEnterClick);
             this.Window.Browser.AddEventHandler("panicbutton", "onclick", this.OnPanicClick);
             this.Window.Browser.AddEventHandler("accountinfobutton", "onclick", this.OnAccountInfoToggle);
+            this.Window.Browser.AddEventHandler("lockoutbutton", "onclick", this.OnLockOutClick);
 
             this.RegisterService<LinkingPluginService>();
             this.pollTimer = new System.Threading.Timer(_ => this.PollHub(), null, 250, 250);
@@ -245,8 +257,10 @@ namespace TNTradePanel.Plugin
             this.RefreshEntryToggleUi();
             this.RefreshDirectionUi();
             this.RefreshDrawButtonUi();
+            this.RefreshScalpUi();
             this.RefreshQtyUi();
             this.RefreshAccountInfoUi(force: true);
+            this.RefreshLockOutUi(force: true);
             this.SetStatus("Select an account and add TN Trade Panel Lines to the chart.");
         }
 
@@ -317,7 +331,12 @@ namespace TNTradePanel.Plugin
 
             this.RefreshLinkedLabels();
             this.RefreshAccountInfoUi(force: true);
-            this.SetStatus("Account: " + selected.Name);
+            this.lockOutConfirmUntilUtc = null;
+            this.RefreshLockOutUi(force: true);
+            if (this.IsTradingLockedOut())
+                this.SetStatus("Account locked out for today — trading blocked.");
+            else
+                this.SetStatus("Account: " + selected.Name);
         }
 
         private void OnAccountInfoToggle(string elementId, object args)
@@ -771,6 +790,33 @@ namespace TNTradePanel.Plugin
                 + this.beOffsetTicks + " ticks.");
         }
 
+        private void OnScalpClick(string elementId, object args)
+        {
+            this.scalpingOn = !this.scalpingOn;
+            this.PublishVisualSettings();
+            this.RefreshScalpUi();
+
+            if (!this.scalpingOn)
+                this.SetStatus("Scalping: off — SL trailing stopped.");
+            else if (TradeSetupHub.LineListeners <= 0)
+                this.SetStatus("Scalping: on — but no indicator on the chart. Add: TN Trade Panel Lines.");
+            else
+                this.SetStatus("Scalping: on — in profit, SL trails below broken red candles (above green for short) − "
+                    + this.beOffsetTicks + " ticks.");
+        }
+
+        private void RefreshScalpUi()
+        {
+            try
+            {
+                this.Window.Browser.UpdateHtml(string.Empty, HtmlAction.InvokeJs,
+                    this.scalpingOn ? "setScalp(true)" : "setScalp(false)");
+            }
+            catch
+            {
+            }
+        }
+
         private void OnEnterClick(string elementId, object args)
         {
             if (this.enterBusy)
@@ -797,6 +843,38 @@ namespace TNTradePanel.Plugin
             this.SetStatus(error ?? "Panic: positions and pendings closed.");
         }
 
+        private void OnLockOutClick(string elementId, object args)
+        {
+            if (this.currentAccount == null)
+            {
+                this.SetStatus("Select an account first.");
+                return;
+            }
+
+            if (this.IsTradingLockedOut())
+            {
+                this.RefreshLockOutUi(force: true);
+                this.SetStatus("Already locked out for this account today.");
+                return;
+            }
+
+            DateTime now = DateTime.UtcNow;
+            if (!this.lockOutConfirmUntilUtc.HasValue || now > this.lockOutConfirmUntilUtc.Value)
+            {
+                this.lockOutConfirmUntilUtc = now.AddSeconds(LockOutConfirmSeconds);
+                this.RefreshLockOutUi(force: true);
+                this.SetStatus("Really lock out trading for this account for the rest of today? Press again to confirm.");
+                return;
+            }
+
+            this.lockOutConfirmUntilUtc = null;
+            this.PersistLockOut(this.currentAccount, DateTime.Today);
+            this.lastLimitText = null;
+            this.RefreshLockOutUi(force: true);
+            this.RefreshLimitUi();
+            this.SetStatus("LOCKED OUT — no panel trading for this account until tomorrow.");
+        }
+
         private void PollHub()
         {
             try
@@ -808,10 +886,24 @@ namespace TNTradePanel.Plugin
                 this.CheckVirtualStopTouch();
                 this.RefreshGhostOrderWarn();
                 this.RefreshLimitUi();
-                if (!TradeSetupHub.TryPull(ref this.hubSeq, out _))
+                this.RefreshLockOutUi(force: false);
+                if (!TradeSetupHub.TryPull(ref this.hubSeq, out string command))
                     return;
+                bool scalpStale;
+                double? stop;
                 lock (TradeSetupHub.Sync)
+                {
                     this.beArmed = TradeSetupHub.Current.ShowBreakEven && TradeSetupHub.Current.BreakEven.HasValue;
+                    // A payload posted by the indicator before it saw a toggle carries the old value.
+                    scalpStale = TradeSetupHub.Current.ScalpingOn != this.scalpingOn
+                        || TradeSetupHub.Current.ScalpOffsetTicks != this.beOffsetTicks;
+                    stop = TradeSetupHub.Current.StopLoss;
+                }
+                if (scalpStale)
+                    this.PublishVisualSettings();
+                if (command == TradeSetupHub.ScalpStopCommand && this.scalpingOn && stop.HasValue)
+                    this.SetStatus("Scalp: SL → " + (this.CurrentSymbol?.FormatPrice(stop.Value)
+                        ?? stop.Value.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture)));
                 this.RefreshDrawButtonUi();
                 this.RefreshQtyUi();
                 if (this.accountInfoOpen)
@@ -833,6 +925,8 @@ namespace TNTradePanel.Plugin
                 TradeSetupHub.Current.BreakEvenColorArgb = this.breakEvenLineColor.ToArgb();
                 TradeSetupHub.Current.LineWidth = this.lineWidth;
                 TradeSetupHub.Current.LineStyle = this.lineStyle;
+                TradeSetupHub.Current.ScalpingOn = this.scalpingOn;
+                TradeSetupHub.Current.ScalpOffsetTicks = this.beOffsetTicks;
             }
             TradeSetupHub.NotifySetupChanged();
         }
@@ -875,6 +969,9 @@ namespace TNTradePanel.Plugin
                 if (this.IsDailyLimitReached(day))
                     text += "<br><b style=\"color:#ff4040\">DAILY LIMIT — BLOCKED</b>";
             }
+
+            if (this.IsTradingLockedOut())
+                text += "<br><b style=\"color:#ff4040\">LOCK OUT — TODAY</b>";
 
             if (text == this.lastLimitText)
                 return;
@@ -1094,7 +1191,7 @@ namespace TNTradePanel.Plugin
                 TradeSetupHub.Current.ShowStop = true;
                 TradeSetupHub.Current.StopLoss = beStop;
                 TradeSetupHub.Current.StopLocked = true;
-                TradeSetupHub.Current.LockedStopFloor = beStop;
+                // Widen limit stays the stop captured at the last entry; BE only moves the line.
                 TradeSetupHub.Current.ShowBreakEven = false;
                 TradeSetupHub.Current.BreakEven = null;
             }
@@ -1107,7 +1204,7 @@ namespace TNTradePanel.Plugin
         }
 
         /// <summary>
-        /// Indicator snaps SL on DROP; panel also enforces initial risk if that misses
+        /// Indicator snaps SL on DROP; panel also enforces the last-entry stop if that misses
         /// (e.g. continuous contract chart). Skips while dragging.
         /// </summary>
         private void EnforceStopRiskCap()
@@ -1124,16 +1221,13 @@ namespace TNTradePanel.Plugin
                 if (setup.Dragging || !setup.StopLocked || !setup.ShowStop || !setup.StopLoss.HasValue)
                     return;
 
-                double ticks = setup.LockedStopTicks;
-                if (ticks <= 0)
+                int direction = position.Side == Side.Buy ? 1 : -1;
+                double? max = PositionSizing.WidestLockedStop(
+                    this.CurrentSymbol, position.OpenPrice, direction, setup.LockedStopTicks, setup.LockedStopFloor);
+                if (!max.HasValue)
                     return;
 
-                int direction = position.Side == Side.Buy ? 1 : -1;
-                double max = direction > 0
-                    ? position.OpenPrice - ticks * tick
-                    : position.OpenPrice + ticks * tick;
-                capped = PositionSizing.RoundToTick(this.CurrentSymbol, max);
-
+                capped = max.Value;
                 bool widened = direction > 0
                     ? setup.StopLoss.Value < capped - tick * 0.5
                     : setup.StopLoss.Value > capped + tick * 0.5;
@@ -1144,7 +1238,7 @@ namespace TNTradePanel.Plugin
             }
 
             TradeSetupHub.NotifySetupChanged();
-            this.SetStatus("SL restored to initial risk: "
+            this.SetStatus("SL restored to entry stop: "
                 + (this.CurrentSymbol?.FormatPrice(capped) ?? capped.ToString("0.####")));
         }
 
@@ -1356,6 +1450,9 @@ namespace TNTradePanel.Plugin
         {
             if (this.CurrentSymbol == null || this.currentAccount == null)
                 return "Select an account and link the panel to the chart.";
+
+            if (this.IsTradingLockedOut())
+                return "Lock Out active for this account today — trading blocked.";
 
             if (this.IsDailyLimitReached(this.GetDailyPnlUsd()))
                 return "Daily max loss reached (" + this.dailyMaxLossUsd.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)
@@ -1695,6 +1792,118 @@ namespace TNTradePanel.Plugin
             return null;
         }
 
+        private void RefreshLockOutUi(bool force)
+        {
+            if (this.lockOutConfirmUntilUtc.HasValue && DateTime.UtcNow > this.lockOutConfirmUntilUtc.Value)
+                this.lockOutConfirmUntilUtc = null;
+
+            string state = this.IsTradingLockedOut()
+                ? "locked"
+                : (this.lockOutConfirmUntilUtc.HasValue ? "confirm" : "idle");
+            if (!force && state == this.lastLockOutUiState)
+                return;
+
+            this.lastLockOutUiState = state;
+            try
+            {
+                this.Window.Browser.UpdateHtml(string.Empty, HtmlAction.InvokeJs,
+                    "setLockOut('" + state + "')");
+            }
+            catch
+            {
+            }
+        }
+
+        private bool IsTradingLockedOut()
+        {
+            return this.IsTradingLockedOut(this.currentAccount, DateTime.Today);
+        }
+
+        private bool IsTradingLockedOut(Account account, DateTime localDay)
+        {
+            string key = LockOutKey(account, localDay);
+            if (key == null)
+                return false;
+            return this.ReadLockOutKeys().Contains(key);
+        }
+
+        private void PersistLockOut(Account account, DateTime localDay)
+        {
+            string key = LockOutKey(account, localDay);
+            if (key == null)
+                return;
+
+            lock (LockOutFileSync)
+            {
+                HashSet<string> keys = this.ReadLockOutKeysUnlocked();
+                if (!keys.Add(key))
+                    return;
+                this.WriteLockOutKeysUnlocked(keys);
+            }
+        }
+
+        private HashSet<string> ReadLockOutKeys()
+        {
+            lock (LockOutFileSync)
+                return this.ReadLockOutKeysUnlocked();
+        }
+
+        private HashSet<string> ReadLockOutKeysUnlocked()
+        {
+            var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                if (!File.Exists(LockOutStorePath))
+                    return keys;
+
+                string today = FormatLockOutDay(DateTime.Today);
+                foreach (string line in File.ReadAllLines(LockOutStorePath))
+                {
+                    if (string.IsNullOrWhiteSpace(line))
+                        continue;
+                    // Drop expired days so the file does not grow forever.
+                    if (!line.EndsWith("|" + today, StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    keys.Add(line.Trim());
+                }
+            }
+            catch
+            {
+            }
+
+            return keys;
+        }
+
+        private void WriteLockOutKeysUnlocked(HashSet<string> keys)
+        {
+            try
+            {
+                string dir = Path.GetDirectoryName(LockOutStorePath);
+                if (!string.IsNullOrEmpty(dir))
+                    Directory.CreateDirectory(dir);
+                File.WriteAllLines(LockOutStorePath, keys.OrderBy(k => k, StringComparer.OrdinalIgnoreCase));
+            }
+            catch
+            {
+            }
+        }
+
+        private static string LockOutKey(Account account, DateTime localDay)
+        {
+            if (account == null)
+                return null;
+            string connection = string.IsNullOrEmpty(account.ConnectionId) ? "_" : account.ConnectionId;
+            string id = !string.IsNullOrEmpty(account.Id) ? account.Id : account.Name;
+            if (string.IsNullOrEmpty(id))
+                return null;
+            return connection + "|" + id + "|" + FormatLockOutDay(localDay);
+        }
+
+        private static string FormatLockOutDay(DateTime localDay)
+        {
+            return localDay.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+        }
+
         private static bool SameSymbol(Symbol a, Symbol b)
         {
             if (a == null || b == null)
@@ -1766,7 +1975,9 @@ namespace TNTradePanel.Plugin
                 StopLocked = source.StopLocked,
                 LockedStopFloor = source.LockedStopFloor,
                 LockedStopTicks = source.LockedStopTicks,
-                DrawDirection = source.DrawDirection
+                DrawDirection = source.DrawDirection,
+                ScalpingOn = source.ScalpingOn,
+                ScalpOffsetTicks = source.ScalpOffsetTicks
             };
         }
     }

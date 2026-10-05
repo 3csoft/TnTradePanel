@@ -294,36 +294,17 @@ namespace TNTradePanel.Indicator
                 if (!setup.StopLocked || !setup.StopLoss.HasValue)
                     return;
 
-                double? maxStop = this.MaxInitialRiskStop(setup, position);
+                int direction = position.Side == Side.Buy ? 1 : -1;
+                double? maxStop = PositionSizing.WidestLockedStop(
+                    this.Symbol, position.OpenPrice, direction, setup.LockedStopTicks, setup.LockedStopFloor);
                 if (!maxStop.HasValue)
                     return;
-
-                int direction = position.Side == Side.Buy ? 1 : -1;
                 bool widened = direction > 0
                     ? setup.StopLoss.Value < maxStop.Value
                     : setup.StopLoss.Value > maxStop.Value;
                 if (widened)
                     setup.StopLoss = maxStop.Value;
             }
-        }
-
-        /// <summary>Initial risk from average entry: for long, SL cannot go below this.</summary>
-        private double? MaxInitialRiskStop(TradeSetup setup, Position position)
-        {
-            if (this.Symbol == null || position == null)
-                return null;
-            double tick = this.Symbol.TickSize > 0 ? this.Symbol.TickSize : 0.25;
-            double avg = position.OpenPrice;
-            if (avg <= 0)
-                return setup.LockedStopFloor;
-            double ticks = setup.LockedStopTicks;
-            if (ticks <= 0 && setup.LockedStopFloor.HasValue)
-                ticks = Math.Abs(avg - setup.LockedStopFloor.Value) / tick;
-            if (ticks <= 0)
-                return setup.LockedStopFloor;
-
-            int direction = position.Side == Side.Buy ? 1 : -1;
-            return PositionSizing.RoundToTick(this.Symbol, direction > 0 ? avg - ticks * tick : avg + ticks * tick);
         }
 
         private double ResolveEntryPrice(TradeSetup setup)
@@ -608,6 +589,149 @@ namespace TNTradePanel.Indicator
         protected override void OnUpdate(UpdateArgs args)
         {
             this.PollHub();
+            if (args == null || args.Reason != UpdateReason.HistoricalBar)
+                this.ApplyScalpTrail();
+        }
+
+        private const int ScalpLookbackBars = 60;
+
+        /// <summary>
+        /// Scalping: in profit, once the current with-trend candle breaks the extreme of the last
+        /// counter-candle group (long: reds' highest high), SL moves past the group's other extreme.
+        /// </summary>
+        private void ApplyScalpTrail()
+        {
+            if (this.Symbol == null || this.Count < 2)
+                return;
+
+            bool on;
+            bool dragging;
+            double? stop;
+            int offsetTicks;
+            lock (TradeSetupHub.Sync)
+            {
+                TradeSetup setup = TradeSetupHub.Current;
+                on = setup.ScalpingOn;
+                dragging = setup.Dragging;
+                stop = setup.ShowStop ? setup.StopLoss : null;
+                offsetTicks = Math.Max(0, setup.ScalpOffsetTicks);
+            }
+
+            if (!on || dragging || !stop.HasValue || this.dragging != DragTarget.None)
+                return;
+
+            Position position = this.FindOpenPosition();
+            if (position == null || position.OpenPrice <= 0)
+                return;
+
+            int direction = position.Side == Side.Buy ? 1 : -1;
+            double price = this.GetExitPrice(direction);
+            if (price <= 0 || direction * (price - position.OpenPrice) <= 0)
+                return;
+
+            double open0 = this.GetPrice(PriceType.Open, 0);
+            double close0 = this.GetPrice(PriceType.Close, 0);
+            bool withTrend = direction > 0 ? close0 > open0 : close0 < open0;
+            if (!withTrend)
+                return;
+
+            if (!this.FindCounterGroup(direction, out double groupHigh, out double groupLow))
+                return;
+
+            double tick = this.Symbol.TickSize > 0 ? this.Symbol.TickSize : 0.25;
+            double newStop;
+            if (direction > 0)
+            {
+                if (this.GetPrice(PriceType.High, 0) <= groupHigh)
+                    return;
+                newStop = PositionSizing.RoundToTick(this.Symbol, groupLow - offsetTicks * tick);
+                if (newStop <= stop.Value + tick * 0.5 || newStop >= price - tick * 0.5)
+                    return;
+            }
+            else
+            {
+                if (this.GetPrice(PriceType.Low, 0) >= groupLow)
+                    return;
+                newStop = PositionSizing.RoundToTick(this.Symbol, groupHigh + offsetTicks * tick);
+                if (newStop >= stop.Value - tick * 0.5 || newStop <= price + tick * 0.5)
+                    return;
+            }
+
+            lock (TradeSetupHub.Sync)
+            {
+                TradeSetup setup = TradeSetupHub.Current;
+                if (!setup.ScalpingOn || setup.Dragging || !setup.ShowStop || !setup.StopLoss.HasValue)
+                    return;
+                bool tighter = direction > 0
+                    ? newStop > setup.StopLoss.Value + tick * 0.5
+                    : newStop < setup.StopLoss.Value - tick * 0.5;
+                if (!tighter)
+                    return;
+                setup.StopLoss = newStop;
+            }
+
+            TradeSetupHub.NotifyScalpStop();
+            this.CurrentChart?.RedrawBuffer();
+        }
+
+        /// <summary>
+        /// Most recent run of counter-direction candles before the current bar (long: red, short: green).
+        /// With-trend candles between the run and the current bar must not have broken it already.
+        /// </summary>
+        private bool FindCounterGroup(int direction, out double groupHigh, out double groupLow)
+        {
+            groupHigh = double.MinValue;
+            groupLow = double.MaxValue;
+            int limit = Math.Min(this.Count, ScalpLookbackBars);
+
+            int i = 1;
+            double skippedHigh = double.MinValue;
+            double skippedLow = double.MaxValue;
+            while (i < limit && !this.IsCounterCandle(i, direction))
+            {
+                skippedHigh = Math.Max(skippedHigh, this.GetPrice(PriceType.High, i));
+                skippedLow = Math.Min(skippedLow, this.GetPrice(PriceType.Low, i));
+                i++;
+            }
+
+            bool found = false;
+            while (i < limit && this.IsCounterCandle(i, direction))
+            {
+                groupHigh = Math.Max(groupHigh, this.GetPrice(PriceType.High, i));
+                groupLow = Math.Min(groupLow, this.GetPrice(PriceType.Low, i));
+                found = true;
+                i++;
+            }
+
+            if (!found)
+                return false;
+
+            return direction > 0 ? skippedHigh <= groupHigh : skippedLow >= groupLow;
+        }
+
+        private bool IsCounterCandle(int index, int direction)
+        {
+            double open = this.GetPrice(PriceType.Open, index);
+            double close = this.GetPrice(PriceType.Close, index);
+            return direction > 0 ? close < open : close > open;
+        }
+
+        private double GetExitPrice(int direction)
+        {
+            try
+            {
+                if (direction > 0 && this.Symbol.Bid > 0)
+                    return this.Symbol.Bid;
+                if (direction < 0 && this.Symbol.Ask > 0)
+                    return this.Symbol.Ask;
+                if (this.Symbol.Last > 0)
+                    return this.Symbol.Last;
+            }
+            catch
+            {
+            }
+
+            return this.Count > 0 ? this.GetPrice(PriceType.Close, 0) : 0;
         }
 
         private void PollHub()
