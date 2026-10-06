@@ -68,6 +68,22 @@
                 btn.innerHTML = 'Lock Out';
             }
         }
+
+        function setLock1h(state, label) {
+            var btn = document.getElementById('lock1hbutton');
+            if (!btn)
+                return;
+            if (state === 'locked') {
+                btn.className = 'login100-form-btn lock1h-locked';
+                btn.innerHTML = label || 'LOCKED 1H';
+            } else if (state === 'confirm') {
+                btn.className = 'login100-form-btn lock1h-confirm';
+                btn.innerHTML = 'Really lock 1h?';
+            } else {
+                btn.className = 'login100-form-btn lock1h-idle';
+                btn.innerHTML = 'Lock 1h';
+            }
+        }
     </script>
     <style>
         body { margin: 0; }
@@ -120,24 +136,41 @@
             padding-top: 10px;
             border-top: 2px solid #5a2020;
         }
-        #lockoutbutton.lockout-idle {
+        #lockoutbutton.lockout-idle,
+        #lock1hbutton.lock1h-idle {
             background: #4a1010 !important;
             color: #ffb0b0 !important;
             font-weight: 700 !important;
             border: 1px solid #8a3030 !important;
         }
-        #lockoutbutton.lockout-confirm {
+        #lock1hbutton.lock1h-idle {
+            background: #5a3010 !important;
+            color: #ffd0a0 !important;
+            border: 1px solid #a06020 !important;
+        }
+        #lockoutbutton.lockout-confirm,
+        #lock1hbutton.lock1h-confirm {
             background: #c02828 !important;
             color: #ffffff !important;
             font-weight: 700 !important;
             border: 1px solid #ff6060 !important;
         }
-        #lockoutbutton.lockout-locked {
+        #lock1hbutton.lock1h-confirm {
+            background: #c06018 !important;
+            border: 1px solid #ffb060 !important;
+        }
+        #lockoutbutton.lockout-locked,
+        #lock1hbutton.lock1h-locked {
             background: #2a0808 !important;
             color: #ff4040 !important;
             font-weight: 700 !important;
             border: 1px solid #ff2020 !important;
             letter-spacing: 0.04em;
+        }
+        #lock1hbutton.lock1h-locked {
+            background: #2a1808 !important;
+            color: #ffb040 !important;
+            border: 1px solid #ff9020 !important;
         }
         .account-info {
             display: none;
@@ -263,6 +296,9 @@
                 </div>
             </div>
             <div class="row lockout-sep">
+                <button type="button" id="lock1hbutton" class="login100-form-btn lock1h-idle">Lock 1h</button>
+            </div>
+            <div class="row">
                 <button type="button" id="lockoutbutton" class="login100-form-btn lockout-idle">Lock Out</button>
             </div>
         </panelBody>

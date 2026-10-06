@@ -21,6 +21,7 @@ Watch on YouTube: [https://youtu.be/sMG_ZUogGO0](https://youtu.be/sMG_ZUogGO0)
 - **Loss limit (USD)** — sizes quantity; also an **emergency flatten** if floating loss reaches the limit (even while dragging SL).
 - **Min 1 contract (optional, off by default)** — if sizing gives quantity 0, enter with the minimum lot and temporarily raise the loss limit to that trade's risk until flat.
 - **Daily max loss (USD, 0 = off)** — once the day's PnL (broker Net PnL + live open PnL) reaches −limit, entries are blocked and the account is flattened.
+- **Max open contracts** — default 10; entries/scale-ins are capped so total open size on the linked symbol cannot exceed this (partial fill of the sized quantity when headroom is smaller).
 - **Lines** — place or clear Entry, SL, TP on the color-linked chart (indicator required). Each line has a wide colored tag with a round grip on the left for easy dragging.
 - **LONG / SHORT** — draw direction; opposite side blocked while a position is open.
 - **Entry on/off** — toggle Entry while SL/TP are already out; always snaps to current market.
@@ -30,6 +31,7 @@ Watch on YouTube: [https://youtu.be/sMG_ZUogGO0](https://youtu.be/sMG_ZUogGO0)
 - **BE line** — purple button; with an open position, drag into place; on touch, SL moves to avg entry ± offset ticks and the BE line is removed.
 - **Scale-in** — only allowed when SL is already at/beyond prior entry (no open risk).
 - **Panic** — close everything on the account and reset line state.
+- **Lock 1h** — confirm once; blocks panel entries for the selected account (that connection) for one hour. Survives Quantower restart; clears when the hour is up.
 - **Lock Out** — confirm once; blocks panel entries for the selected account (that connection) for the rest of the local day. Survives Quantower restart; clears tomorrow.
 - **Ghost-order warning** — flashing alert under Panic when the account has no position but leftover working orders.
 - **Account panel** — bottom toggle shows Balance, Cash on hand, and Daily PnL.
@@ -151,6 +153,7 @@ Indicator  (TNTradePanelLines)  ← must be on the chart for draw/drag
 - **BE hit: SL = avg entry + X ticks**
 - **Allow 1 contract when quantity = 0** (default off)
 - **Daily max loss (USD, 0 = off)**
+- **Max open contracts** (default 10)
 - Entry / SL / TP / BE **line colors**, **width**, **style** (Solid, Dash, Dot, …)
 
 ## Troubleshooting
