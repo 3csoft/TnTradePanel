@@ -30,6 +30,10 @@ namespace TNTradePanel.Plugin
         private bool entryCheckOn = true;
         private bool accountInfoOpen;
         private bool scalpingOn;
+        private bool maExitOn;
+        private int maPeriod = 20;
+        private int maType;
+        private int lastMaExitPulse;
         private bool? lastGhostWarnVisible;
         private int hubSeq;
         private int nextDrawDirection = 1;
@@ -38,12 +42,33 @@ namespace TNTradePanel.Plugin
         private System.Threading.Timer pollTimer;
 
         private double lossLimitUsd = 100;
+        private bool fixedContractsMode;
+        private double fixedContracts = 1;
         private bool allowMinOneContract;
         private double dailyMaxLossUsd;
         private int maxOpenContracts = 10;
+        private bool tradeManagementOn;
+        private double beAfterPct = 100;
+        private double partial1LevelPct = 100;
+        private double partial1ClosePct = 50;
+        private double partial2LevelPct = 200;
+        private double partial2ClosePct = 50;
+        private bool mgmtActive;
+        /// <summary>True once an open position was seen for this armed management cycle.</summary>
+        private bool mgmtSawPosition;
+        private double mgmtRiskDistance;
+        private bool mgmtBeDone;
+        private bool mgmtPartial1Done;
+        private bool mgmtPartial2Done;
+        private bool mgmtBusy;
+        /// <summary>True after a partial order is sent, until the open quantity actually drops.</summary>
+        private bool mgmtAwaitingFill;
+        private double mgmtQtyBeforePartial;
         private bool dailyCloseBusy;
-        /// <summary>Raised loss limit while a forced 1-contract trade is running; null = use lossLimitUsd.</summary>
+        /// <summary>Raised loss limit while a trade risks more than the configured amount; null = use lossLimitUsd.</summary>
         private double? effectiveLossLimitUsd;
+        /// <summary>Shown next to a raised loss limit: "1-lot" or "fixed".</summary>
+        private string effectiveLimitNote;
         private DateTime effectiveLossLimitSetUtc;
         private string lastLimitText;
         private DateTime? lossBreachSinceUtc;
@@ -132,38 +157,56 @@ namespace TNTradePanel.Plugin
             };
         }
 
-        public override Size DefaultSize => new Size(180, 1010);
+        public override Size DefaultSize => new Size(180, 1140);
 
         public override IList<SettingItem> Settings
         {
             get
             {
                 IList<SettingItem> result = base.Settings;
+                result.Add(new SettingItemSelectorLocalized("SizeMode",
+                    new SelectItem("", this.fixedContractsMode ? 1 : 0),
+                    new List<SelectItem>
+                    {
+                        new SelectItem("Risk amount", 0),
+                        new SelectItem("Fix contracts", 1)
+                    })
+                {
+                    Text = "Default size mode",
+                    SortIndex = 9
+                });
                 result.Add(new SettingItemDouble("LossLimitUsd", this.lossLimitUsd)
                 {
-                    Text = "Loss limit (USD)",
+                    Text = "Default risk amount (USD)",
                     SortIndex = 10,
                     Minimum = 1,
                     Maximum = 1000000,
                     Increment = 10,
                     DecimalPlaces = 0
                 });
+                result.Add(new SettingItemInteger("FixedContracts", (int)Math.Max(1, Math.Round(this.fixedContracts)))
+                {
+                    Text = "Default fixed contracts",
+                    SortIndex = 11,
+                    Minimum = 1,
+                    Maximum = 10000
+                });
                 result.Add(new SettingItemInteger("BeOffsetTicks", this.beOffsetTicks)
                 {
                     Text = "BE hit: SL = avg entry + X ticks (also scalping SL offset)",
-                    SortIndex = 11,
+                    SortIndex = 12,
                     Minimum = 0,
                     Maximum = 200
                 });
                 result.Add(new SettingItemBoolean("AllowMinOneContract", this.allowMinOneContract)
                 {
-                    Text = "Allow 1 contract when quantity = 0 (raises loss limit for that trade)",
-                    SortIndex = 12
+                    Text = "Allow 1 contract when quantity = 0 (raises the risk amount for that trade)",
+                    SortIndex = 13
                 });
                 result.Add(new SettingItemDouble("DailyMaxLossUsd", this.dailyMaxLossUsd)
                 {
                     Text = "Daily max loss (USD, 0 = off)",
-                    SortIndex = 13,
+                    SortIndex = 14,
                     Minimum = 0,
                     Maximum = 1000000,
                     Increment = 50,
@@ -172,9 +215,77 @@ namespace TNTradePanel.Plugin
                 result.Add(new SettingItemInteger("MaxOpenContracts", this.maxOpenContracts)
                 {
                     Text = "Max open contracts (scale-in cap)",
-                    SortIndex = 14,
+                    SortIndex = 15,
                     Minimum = 1,
                     Maximum = 10000
+                });
+                result.Add(new SettingItemSelectorLocalized("MaType",
+                    new SelectItem("", this.maType),
+                    new List<SelectItem>
+                    {
+                        new SelectItem("SMA", 0),
+                        new SelectItem("EMA", 1)
+                    })
+                {
+                    Text = "MA exit type (chart timeframe)",
+                    SortIndex = 16
+                });
+                result.Add(new SettingItemInteger("MaPeriod", this.maPeriod)
+                {
+                    Text = "MA exit period",
+                    SortIndex = 17,
+                    Minimum = 2,
+                    Maximum = 500
+                });
+                result.Add(new SettingItemBoolean("TradeManagementOn", this.tradeManagementOn)
+                {
+                    Text = "Partial close & trade management",
+                    SortIndex = 40
+                });
+                result.Add(new SettingItemDouble("BeAfterPct", this.beAfterPct)
+                {
+                    Text = "BE after (% of Entry↔SL, 0 = off)",
+                    SortIndex = 41,
+                    Minimum = 0,
+                    Maximum = 1000,
+                    Increment = 1,
+                    DecimalPlaces = 0
+                });
+                result.Add(new SettingItemDouble("Partial1LevelPct", this.partial1LevelPct)
+                {
+                    Text = "1st exit level (% of Entry↔SL, 0 = off)",
+                    SortIndex = 42,
+                    Minimum = 0,
+                    Maximum = 1000,
+                    Increment = 1,
+                    DecimalPlaces = 0
+                });
+                result.Add(new SettingItemDouble("Partial1ClosePct", this.partial1ClosePct)
+                {
+                    Text = "1st partial close (% of open qty, ceil)",
+                    SortIndex = 43,
+                    Minimum = 1,
+                    Maximum = 100,
+                    Increment = 1,
+                    DecimalPlaces = 0
+                });
+                result.Add(new SettingItemDouble("Partial2LevelPct", this.partial2LevelPct)
+                {
+                    Text = "2nd exit level (% of Entry↔SL, 0 = off)",
+                    SortIndex = 44,
+                    Minimum = 0,
+                    Maximum = 1000,
+                    Increment = 1,
+                    DecimalPlaces = 0
+                });
+                result.Add(new SettingItemDouble("Partial2ClosePct", this.partial2ClosePct)
+                {
+                    Text = "2nd partial close (% of open qty, ceil)",
+                    SortIndex = 45,
+                    Minimum = 1,
+                    Maximum = 100,
+                    Increment = 1,
+                    DecimalPlaces = 0
                 });
                 result.Add(new SettingItemColor("EntryLineColor", this.entryLineColor)
                 {
@@ -222,8 +333,12 @@ namespace TNTradePanel.Plugin
             set
             {
                 base.Settings = value;
+                if (value.TryGetValue("SizeMode", out int sizeMode))
+                    this.fixedContractsMode = sizeMode == 1;
                 if (value.TryGetValue("LossLimitUsd", out double limit) && limit > 0)
                     this.lossLimitUsd = limit;
+                if (value.TryGetValue("FixedContracts", out int fixedQty) && fixedQty >= 1)
+                    this.fixedContracts = fixedQty;
                 if (value.TryGetValue("BeOffsetTicks", out int beTicks) && beTicks >= 0)
                     this.beOffsetTicks = beTicks;
                 if (value.TryGetValue("AllowMinOneContract", out bool allowMinOne))
@@ -232,6 +347,25 @@ namespace TNTradePanel.Plugin
                     this.dailyMaxLossUsd = dailyMax;
                 if (value.TryGetValue("MaxOpenContracts", out int maxOpen) && maxOpen >= 1)
                     this.maxOpenContracts = maxOpen;
+                if (value.TryGetValue("MaType", out int maKind))
+                    this.maType = maKind == 1 ? 1 : 0;
+                if (value.TryGetValue("MaPeriod", out int maLen) && maLen >= 2)
+                    this.maPeriod = Math.Min(500, maLen);
+                bool wasTmOn = this.tradeManagementOn;
+                if (value.GetItemByPath("TradeManagementOn") is SettingItemBoolean tmItem)
+                    this.tradeManagementOn = (bool)tmItem.Value;
+                else if (value.TryGetValue("TradeManagementOn", out bool tmOn))
+                    this.tradeManagementOn = tmOn;
+                if (value.TryGetValue("BeAfterPct", out double beAfter) && beAfter >= 0)
+                    this.beAfterPct = beAfter;
+                if (value.TryGetValue("Partial1LevelPct", out double p1Level) && p1Level >= 0)
+                    this.partial1LevelPct = p1Level;
+                if (value.TryGetValue("Partial1ClosePct", out double p1Close) && p1Close > 0)
+                    this.partial1ClosePct = Math.Min(100, p1Close);
+                if (value.TryGetValue("Partial2LevelPct", out double p2Level) && p2Level >= 0)
+                    this.partial2LevelPct = p2Level;
+                if (value.TryGetValue("Partial2ClosePct", out double p2Close) && p2Close > 0)
+                    this.partial2ClosePct = Math.Min(100, p2Close);
                 if (value.GetItemByPath("EntryLineColor") is SettingItemColor entryColor)
                     this.entryLineColor = (Color)entryColor.Value;
                 if (value.GetItemByPath("StopLineColor") is SettingItemColor stopColor)
@@ -246,7 +380,13 @@ namespace TNTradePanel.Plugin
                     this.lineStyle = style;
 
                 this.PublishVisualSettings();
+                this.RefreshSizeUi();
                 this.RefreshQtyUi();
+                // Turning TM on with an already-open position: arm from current avg entry ↔ SL.
+                if (this.tradeManagementOn && !wasTmOn)
+                    this.TryArmTradeManagementFromOpenPosition();
+                else if (!this.tradeManagementOn && wasTmOn)
+                    this.ClearTradeManagement();
             }
         }
 
@@ -255,12 +395,17 @@ namespace TNTradePanel.Plugin
             base.Initialize();
             this.Window.Browser.AddEventHandler("accountbutton", "onclick", this.OnAccountClick);
             this.Window.Browser.AddEventHandler("accountselect", "onchange", this.OnAccountSelectChanged);
+            this.Window.Browser.AddEventHandler("riskmodebutton", "onclick", this.OnRiskModeClick);
+            this.Window.Browser.AddEventHandler("fixmodebutton", "onclick", this.OnFixModeClick);
+            this.Window.Browser.AddEventHandler("sizeinput", "oninput", this.OnSizeInputChanged);
+            this.Window.Browser.AddEventHandler("sizeinput", "onchange", this.OnSizeInputChanged);
             this.Window.Browser.AddEventHandler("drawlinesbutton", "onclick", this.OnDrawLinesClick);
             this.Window.Browser.AddEventHandler("longbutton", "onclick", this.OnLongClick);
             this.Window.Browser.AddEventHandler("shortbutton", "onclick", this.OnShortClick);
             this.Window.Browser.AddEventHandler("entrytoggle", "onclick", this.OnEntryToggleClick);
             this.Window.Browser.AddEventHandler("bebutton", "onclick", this.OnBeClick);
             this.Window.Browser.AddEventHandler("scalpbutton", "onclick", this.OnScalpClick);
+            this.Window.Browser.AddEventHandler("maexitbutton", "onclick", this.OnMaExitClick);
             this.Window.Browser.AddEventHandler("enterbutton", "onclick", this.OnEnterClick);
             this.Window.Browser.AddEventHandler("panicbutton", "onclick", this.OnPanicClick);
             this.Window.Browser.AddEventHandler("accountinfobutton", "onclick", this.OnAccountInfoToggle);
@@ -271,11 +416,13 @@ namespace TNTradePanel.Plugin
             this.pollTimer = new System.Threading.Timer(_ => this.PollHub(), null, 250, 250);
 
             this.PublishVisualSettings();
+            this.RefreshSizeUi();
             this.RefreshLinkedLabels();
             this.RefreshEntryToggleUi();
             this.RefreshDirectionUi();
             this.RefreshDrawButtonUi();
             this.RefreshScalpUi();
+            this.RefreshMaExitUi();
             this.RefreshQtyUi();
             this.RefreshAccountInfoUi(force: true);
             this.RefreshLockOutUi(force: true);
@@ -327,6 +474,123 @@ namespace TNTradePanel.Plugin
             {
                 NativeJavascriptResponse response = this.Window.Browser.GetHtmlValue("accountselect", HtmlGetValueAction.GetProperty, "value");
                 this.ApplyUserAccount(this.FindAccountByIdOrName(response?.Result?.ToString()));
+            }
+            catch
+            {
+            }
+        }
+
+        private void OnRiskModeClick(string elementId, object args)
+        {
+            this.CommitSizeInput();
+            bool changed = this.fixedContractsMode;
+            this.fixedContractsMode = false;
+            this.PublishVisualSettings();
+            this.RefreshSizeUi();
+            this.RefreshQtyUi();
+            if (changed)
+                this.SetStatus("Size mode: risk amount.");
+        }
+
+        private void OnFixModeClick(string elementId, object args)
+        {
+            this.CommitSizeInput();
+            bool changed = !this.fixedContractsMode;
+            this.fixedContractsMode = true;
+            this.PublishVisualSettings();
+            this.RefreshSizeUi();
+            this.RefreshQtyUi();
+            if (changed)
+                this.SetStatus("Size mode: fix contracts.");
+        }
+
+        private void OnSizeInputChanged(string elementId, object args)
+        {
+            double before = this.fixedContractsMode ? this.fixedContracts : this.lossLimitUsd;
+            if (!this.CommitSizeInput())
+            {
+                this.RefreshSizeUi();
+                return;
+            }
+
+            double after = this.fixedContractsMode ? this.fixedContracts : this.lossLimitUsd;
+            if (Math.Abs(before - after) < 1e-6)
+            {
+                this.RefreshSizeUi();
+                return;
+            }
+
+            this.PublishVisualSettings();
+            this.RefreshSizeUi();
+            this.RefreshQtyUi();
+        }
+
+        private bool CommitSizeInput()
+        {
+            try
+            {
+                NativeJavascriptResponse response = this.Window.Browser.GetHtmlValue("sizeinput", HtmlGetValueAction.GetProperty, "value");
+                if (!TryParsePositive(response?.Result?.ToString(), out double value))
+                    return false;
+                return this.ApplySizeValue(value);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private bool ApplySizeValue(double value)
+        {
+            if (value <= 0 || double.IsNaN(value) || double.IsInfinity(value))
+                return false;
+
+            if (this.fixedContractsMode)
+            {
+                double step = this.CurrentSymbol?.LotStep > 0 ? this.CurrentSymbol.LotStep : 1.0;
+                double qty = Math.Floor((value + step * 1e-9) / step) * step;
+                double maxLot = this.CurrentSymbol != null && this.CurrentSymbol.MaxLot > 0
+                    ? this.CurrentSymbol.MaxLot
+                    : 10000;
+                if (qty > maxLot)
+                    qty = Math.Floor(maxLot / step) * step;
+                if (qty <= 0)
+                    return false;
+                this.fixedContracts = qty;
+                return true;
+            }
+
+            if (value < 1)
+                value = 1;
+            if (value > 1000000)
+                value = 1000000;
+            this.lossLimitUsd = Math.Round(value, 2);
+            return true;
+        }
+
+        private static bool TryParsePositive(string text, out double value)
+        {
+            value = 0;
+            if (string.IsNullOrWhiteSpace(text))
+                return false;
+            text = text.Trim().Replace(',', '.');
+            return double.TryParse(text, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out value)
+                && value > 0
+                && !double.IsNaN(value)
+                && !double.IsInfinity(value);
+        }
+
+        private void RefreshSizeUi()
+        {
+            var inv = System.Globalization.CultureInfo.InvariantCulture;
+            string mode = this.fixedContractsMode ? "fix" : "risk";
+            string value = this.fixedContractsMode
+                ? this.fixedContracts.ToString("0.##", inv)
+                : this.lossLimitUsd.ToString("0.##", inv);
+            try
+            {
+                this.Window.Browser.UpdateHtml(string.Empty, HtmlAction.InvokeJs,
+                    "setSizeUi('" + mode + "','" + value + "')");
             }
             catch
             {
@@ -828,6 +1092,36 @@ namespace TNTradePanel.Plugin
                     + this.beOffsetTicks + " ticks.");
         }
 
+        private void OnMaExitClick(string elementId, object args)
+        {
+            this.maExitOn = !this.maExitOn;
+            this.PublishVisualSettings();
+            this.RefreshMaExitUi();
+            this.lastLimitText = null;
+            this.RefreshLimitUi();
+
+            string kind = this.maType == 1 ? "EMA" : "SMA";
+            if (!this.maExitOn)
+                this.SetStatus("MA exit: off.");
+            else if (TradeSetupHub.LineListeners <= 0)
+                this.SetStatus("MA exit: on — but no indicator on the chart. Add: TN Trade Panel Lines.");
+            else
+                this.SetStatus("MA exit: on — flattens the account when price touches the chart "
+                    + kind + " " + this.maPeriod + " (profit or loss).");
+        }
+
+        private void RefreshMaExitUi()
+        {
+            try
+            {
+                this.Window.Browser.UpdateHtml(string.Empty, HtmlAction.InvokeJs,
+                    this.maExitOn ? "setMaExit(true)" : "setMaExit(false)");
+            }
+            catch
+            {
+            }
+        }
+
         private void RefreshScalpUi()
         {
             try
@@ -948,6 +1242,7 @@ namespace TNTradePanel.Plugin
             {
                 this.EnforceStopRiskCap();
                 this.ReleaseEffectiveLossLimitIfFlat();
+                this.CheckTradeManagement();
                 this.CheckDailyLossLimit();
                 this.CheckLossLimitBreach();
                 this.CheckVirtualStopTouch();
@@ -958,17 +1253,29 @@ namespace TNTradePanel.Plugin
                 if (!TradeSetupHub.TryPull(ref this.hubSeq, out string command))
                     return;
                 bool scalpStale;
+                bool maExitNow = false;
                 double? stop;
                 lock (TradeSetupHub.Sync)
                 {
                     this.beArmed = TradeSetupHub.Current.ShowBreakEven && TradeSetupHub.Current.BreakEven.HasValue;
                     // A payload posted by the indicator before it saw a toggle carries the old value.
                     scalpStale = TradeSetupHub.Current.ScalpingOn != this.scalpingOn
-                        || TradeSetupHub.Current.ScalpOffsetTicks != this.beOffsetTicks;
+                        || TradeSetupHub.Current.ScalpOffsetTicks != this.beOffsetTicks
+                        || TradeSetupHub.Current.MaExitOn != this.maExitOn
+                        || TradeSetupHub.Current.MaType != this.maType
+                        || TradeSetupHub.Current.MaPeriod != this.maPeriod;
                     stop = TradeSetupHub.Current.StopLoss;
+                    int pulse = TradeSetupHub.Current.MaExitPulse;
+                    if (pulse != this.lastMaExitPulse)
+                    {
+                        this.lastMaExitPulse = pulse;
+                        maExitNow = this.maExitOn && this.AccountHasWork();
+                    }
                 }
                 if (scalpStale)
                     this.PublishVisualSettings();
+                if (maExitNow)
+                    this.TryMaExit();
                 if (command == TradeSetupHub.ScalpStopCommand && this.scalpingOn && stop.HasValue)
                     this.SetStatus("Scalp: SL → " + (this.CurrentSymbol?.FormatPrice(stop.Value)
                         ?? stop.Value.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture)));
@@ -984,9 +1291,9 @@ namespace TNTradePanel.Plugin
 
         private void PublishVisualSettings()
         {
+            this.ApplyLiveSizing();
             lock (TradeSetupHub.Sync)
             {
-                TradeSetupHub.Current.LossLimitUsd = this.lossLimitUsd;
                 TradeSetupHub.Current.EntryColorArgb = this.entryLineColor.ToArgb();
                 TradeSetupHub.Current.StopColorArgb = this.stopLineColor.ToArgb();
                 TradeSetupHub.Current.TakeProfitColorArgb = this.takeProfitLineColor.ToArgb();
@@ -995,27 +1302,57 @@ namespace TNTradePanel.Plugin
                 TradeSetupHub.Current.LineStyle = this.lineStyle;
                 TradeSetupHub.Current.ScalpingOn = this.scalpingOn;
                 TradeSetupHub.Current.ScalpOffsetTicks = this.beOffsetTicks;
+                TradeSetupHub.Current.MaExitOn = this.maExitOn;
+                TradeSetupHub.Current.MaType = this.maType;
+                TradeSetupHub.Current.MaPeriod = this.maPeriod;
             }
             TradeSetupHub.NotifySetupChanged();
         }
 
-        private void RefreshQtyUi()
+        /// <summary>
+        /// Writes the live size mode onto the shared setup. Returns true when the hub values changed.
+        /// </summary>
+        private bool ApplyLiveSizing()
         {
             lock (TradeSetupHub.Sync)
-                TradeSetupHub.Current.LossLimitUsd = this.lossLimitUsd;
+            {
+                TradeSetup current = TradeSetupHub.Current;
+                bool changed = current.LossLimitUsd != this.lossLimitUsd
+                    || current.UseFixedContracts != this.fixedContractsMode
+                    || Math.Abs(current.FixedContracts - this.fixedContracts) > 1e-6;
+                current.LossLimitUsd = this.lossLimitUsd;
+                current.UseFixedContracts = this.fixedContractsMode;
+                current.FixedContracts = this.fixedContracts;
+                return changed;
+            }
+        }
+
+        private void RefreshQtyUi()
+        {
+            if (this.ApplyLiveSizing())
+                TradeSetupHub.NotifySetupChanged();
 
             TradeSetup setup;
             lock (TradeSetupHub.Sync)
                 setup = CloneSetup(TradeSetupHub.Current);
 
             PositionSizeResult size = this.CalculateSize(setup, out bool minOne, out bool qtyCapped);
-            string qtyText = size.Ok
-                ? "Quantity: " + FormatQty(this.CurrentSymbol, size.Quantity)
+            var inv = System.Globalization.CultureInfo.InvariantCulture;
+            string qtyText;
+            if (size.Ok)
+            {
+                qtyText = "Quantity: " + FormatQty(this.CurrentSymbol, size.Quantity)
                     + (minOne ? " (min)" : string.Empty)
-                    + (qtyCapped ? " (cap)" : string.Empty)
-                : "Quantity: —";
+                    + (qtyCapped ? " (cap)" : string.Empty);
+                if (this.fixedContractsMode && size.RiskPerContract > 0 && size.Quantity > 0)
+                    qtyText += "<br>Risk: " + (size.RiskPerContract * size.Quantity).ToString("0.##", inv) + " USD";
+            }
+            else if (this.fixedContractsMode && IsSizingWaitingForLines(size))
+                qtyText = "Quantity: " + FormatQty(this.CurrentSymbol, this.fixedContracts);
+            else
+                qtyText = "Quantity: —";
             string rrText = size.RewardRisk > 0
-                ? "RR: " + size.RewardRisk.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture)
+                ? "RR: " + size.RewardRisk.ToString("0.00", inv)
                 : "RR: —";
 
             this.lastLimitText = null;
@@ -1027,12 +1364,20 @@ namespace TNTradePanel.Plugin
         private void RefreshLimitUi()
         {
             var inv = System.Globalization.CultureInfo.InvariantCulture;
-            string text = "Limit: " + this.EffectiveLossLimitUsd.ToString("0.##", inv) + " USD";
-            if (this.effectiveLossLimitUsd.HasValue)
-                text += " (1-lot)";
+            // In risk-amount mode the input already shows this number. Keep the line when the
+            // flatten limit differs (fixed size, or a raised limit for the open trade).
+            string text = string.Empty;
+            if (this.fixedContractsMode || this.effectiveLossLimitUsd.HasValue)
+            {
+                text = "Limit: " + this.EffectiveLossLimitUsd.ToString("0.##", inv) + " USD";
+                if (this.effectiveLossLimitUsd.HasValue && !string.IsNullOrEmpty(this.effectiveLimitNote))
+                    text += " (" + this.effectiveLimitNote + ")";
+            }
 
             double openQty = this.GetOpenContractQuantity();
-            text += "<br>Open: " + openQty.ToString("0.##", inv)
+            if (text.Length > 0)
+                text += "<br>";
+            text += "Open: " + openQty.ToString("0.##", inv)
                 + " / max " + this.maxOpenContracts.ToString(inv);
 
             if (this.dailyMaxLossUsd > 0)
@@ -1056,6 +1401,11 @@ namespace TNTradePanel.Plugin
                 }
             }
 
+            if (this.maExitOn)
+                text += "<br>MA exit: " + (this.maType == 1 ? "EMA " : "SMA ") + this.maPeriod.ToString(inv);
+
+            text += "<br>" + this.BuildTradeManagementStatusHtml(inv);
+
             if (text == this.lastLimitText)
                 return;
             this.lastLimitText = text;
@@ -1070,6 +1420,16 @@ namespace TNTradePanel.Plugin
 
         private double EffectiveLossLimitUsd => this.effectiveLossLimitUsd ?? this.lossLimitUsd;
 
+        private static bool IsSizingWaitingForLines(PositionSizeResult size)
+        {
+            if (size == null || string.IsNullOrEmpty(size.Error))
+                return false;
+            return size.Error.IndexOf("SL", StringComparison.OrdinalIgnoreCase) >= 0
+                || size.Error.IndexOf("Entry", StringComparison.OrdinalIgnoreCase) >= 0
+                || size.Error.IndexOf("direction", StringComparison.OrdinalIgnoreCase) >= 0
+                || size.Error.IndexOf("symbol", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
         /// <summary>
         /// Normal risk sizing; if it yields 0 and the setting allows it, falls back to the
         /// smallest tradable lot (the trade's risk then exceeds the configured loss limit).
@@ -1080,7 +1440,7 @@ namespace TNTradePanel.Plugin
             minOne = false;
             qtyCapped = false;
             PositionSizeResult size = PositionSizing.Calculate(this.CurrentSymbol, setup);
-            if (size.Ok || !this.allowMinOneContract || size.RiskPerContract <= 0 || this.CurrentSymbol == null)
+            if (size.Ok || this.fixedContractsMode || !this.allowMinOneContract || size.RiskPerContract <= 0 || this.CurrentSymbol == null)
             {
                 if (size.Ok)
                     this.ApplyMaxOpenContractsCap(size, out qtyCapped);
@@ -1158,7 +1518,10 @@ namespace TNTradePanel.Plugin
             bool busy = Core.Instance.Positions.Any(p => p != null && SameAccount(p.Account, this.currentAccount))
                 || Core.Instance.Orders.Any(o => o != null && SameAccount(o.Account, this.currentAccount));
             if (!busy)
+            {
                 this.effectiveLossLimitUsd = null;
+                this.effectiveLimitNote = null;
+            }
         }
 
         /// <summary>
@@ -1294,6 +1657,7 @@ namespace TNTradePanel.Plugin
         {
             this.CheckLossLimitBreach(last?.Price);
             this.CheckVirtualStopTouch(last?.Price);
+            this.CheckTradeManagement(last?.Price);
             if (!this.beArmed || last == null)
                 return;
 
@@ -1604,10 +1968,8 @@ namespace TNTradePanel.Plugin
                     + " USD) — trading blocked.";
 
             lock (TradeSetupHub.Sync)
-            {
                 TradeSetupHub.Current.UseEntryLine = this.entryCheckOn;
-                TradeSetupHub.Current.LossLimitUsd = this.lossLimitUsd;
-            }
+            this.ApplyLiveSizing();
 
             TradeSetup setup;
             lock (TradeSetupHub.Sync)
@@ -1704,16 +2066,39 @@ namespace TNTradePanel.Plugin
             }
             TradeSetupHub.NotifySetupChanged();
             this.beArmed = false;
+            this.ArmTradeManagement(Math.Abs(entry - stop));
 
-            if (minOne)
+            bool raisedLimit = false;
+            if (size.RiskPerContract > 0 && size.Quantity > 0)
             {
                 // Headroom of 2 ticks so slippage on the virtual SL does not trigger the limit first.
                 double tradeRisk = size.RiskPerContract * size.Quantity + 2 * size.TickCost * size.Quantity;
-                this.effectiveLossLimitUsd = Math.Max(Math.Max(this.lossLimitUsd, tradeRisk), this.effectiveLossLimitUsd ?? 0);
-                this.effectiveLossLimitSetUtc = DateTime.UtcNow;
-                this.lastLimitText = null;
-                this.RefreshLimitUi();
+                bool exceeds = minOne || (this.fixedContractsMode && tradeRisk > this.lossLimitUsd + 0.01);
+                if (exceeds)
+                {
+                    double raisedTo = Math.Max(this.lossLimitUsd, tradeRisk);
+                    if (!this.effectiveLossLimitUsd.HasValue || raisedTo > this.effectiveLossLimitUsd.Value + 0.01)
+                    {
+                        this.effectiveLossLimitUsd = Math.Max(raisedTo, this.effectiveLossLimitUsd ?? 0);
+                        this.effectiveLossLimitSetUtc = DateTime.UtcNow;
+                        this.effectiveLimitNote = minOne ? "1-lot" : "fixed";
+                        raisedLimit = true;
+                        this.lastLimitText = null;
+                        this.RefreshLimitUi();
+                    }
+                }
+            }
+
+            if (minOne)
+            {
                 return OkWithNote + "Entry sent with minimum lot (quantity was 0). Loss limit raised to "
+                    + this.EffectiveLossLimitUsd.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)
+                    + " USD until flat.";
+            }
+
+            if (raisedLimit)
+            {
+                return OkWithNote + "Entry sent at fixed size. Loss limit raised to "
                     + this.effectiveLossLimitUsd.Value.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)
                     + " USD until flat.";
             }
@@ -1766,6 +2151,39 @@ namespace TNTradePanel.Plugin
                 if (flat.Errors.Count > 0)
                     return "Panic: " + flat.Closed + " positions, " + flat.Cancelled + " orders. " + flat.Errors[0];
                 return null;
+            }
+            finally
+            {
+                this.panicBusy = false;
+            }
+        }
+
+        private bool AccountHasWork()
+        {
+            if (this.currentAccount == null)
+                return false;
+            return Core.Instance.Positions.Any(p => p != null && SameAccount(p.Account, this.currentAccount))
+                || Core.Instance.Orders.Any(o => o != null && SameAccount(o.Account, this.currentAccount));
+        }
+
+        /// <summary>Same flatten as Panic. The MA exit button stays on for the next touch.</summary>
+        private void TryMaExit()
+        {
+            if (this.currentAccount == null || this.panicBusy || this.slCloseBusy || this.lossLimitCloseBusy)
+                return;
+
+            this.panicBusy = true;
+            try
+            {
+                FlattenResult flat = this.FlattenAccount();
+                this.ResetSetupState();
+                string kind = this.maType == 1 ? "EMA" : "SMA";
+                if (flat.Errors.Count > 0)
+                    this.SetStatus("MA exit (" + kind + " " + this.maPeriod + "): "
+                        + flat.Closed + " positions, " + flat.Cancelled + " orders. " + flat.Errors[0]);
+                else
+                    this.SetStatus("MA exit (" + kind + " " + this.maPeriod + "): account flat — "
+                        + flat.Closed + " positions, " + flat.Cancelled + " orders.");
             }
             finally
             {
@@ -1833,11 +2251,331 @@ namespace TNTradePanel.Plugin
             TradeSetupHub.RequestClearLines();
             this.beArmed = false;
             this.lastAppliedBreakEven = null;
+            this.ClearTradeManagement();
             this.nextDrawDirection = 1;
             this.lastGhostWarnVisible = null;
             this.RefreshDirectionUi();
             this.RefreshDrawButtonUi();
             this.RefreshGhostOrderWarn();
+        }
+
+        private void ArmTradeManagement(double riskDistance)
+        {
+            if (!this.tradeManagementOn || riskDistance <= 0)
+                return;
+
+            // Keep the first arm of this trade; scale-ins do not reset progress flags.
+            if (this.mgmtActive && this.mgmtRiskDistance > 0)
+                return;
+
+            this.mgmtActive = true;
+            this.mgmtSawPosition = false;
+            this.mgmtRiskDistance = riskDistance;
+            this.mgmtBeDone = this.beAfterPct <= 0;
+            this.mgmtPartial1Done = this.partial1LevelPct <= 0;
+            this.mgmtPartial2Done = this.partial2LevelPct <= 0;
+            this.mgmtBusy = false;
+            this.mgmtAwaitingFill = false;
+            this.mgmtQtyBeforePartial = 0;
+            this.lastLimitText = null;
+        }
+
+        /// <summary>
+        /// Arms management from the live position and Entry↔SL risk (e.g. TM toggled on mid-trade).
+        /// Falls back to LockedStopTicks when the SL was already pulled to entry for scale-in.
+        /// </summary>
+        private void TryArmTradeManagementFromOpenPosition()
+        {
+            if (!this.tradeManagementOn || (this.mgmtActive && this.mgmtRiskDistance > 0))
+                return;
+
+            Position position = this.FindPosition();
+            if (position == null || position.OpenPrice <= 0)
+                return;
+
+            double? risk = this.ResolveManagementRiskDistance(position);
+            if (!risk.HasValue || risk.Value <= 0)
+                return;
+
+            this.ArmTradeManagement(risk.Value);
+            this.mgmtSawPosition = true;
+        }
+
+        private double? ResolveManagementRiskDistance(Position position)
+        {
+            if (position == null || position.OpenPrice <= 0)
+                return null;
+
+            double entry = position.OpenPrice;
+            double tick = position.Symbol?.TickSize > 0
+                ? position.Symbol.TickSize
+                : (this.CurrentSymbol?.TickSize > 0 ? this.CurrentSymbol.TickSize : 0.25);
+            double minRisk = tick * 0.5;
+
+            double? stop;
+            double lockedTicks;
+            double? lockedFloor;
+            lock (TradeSetupHub.Sync)
+            {
+                TradeSetup setup = TradeSetupHub.Current;
+                stop = setup.StopLoss;
+                lockedTicks = setup.LockedStopTicks;
+                lockedFloor = setup.LockedStopFloor;
+            }
+
+            if (stop.HasValue)
+            {
+                double fromStop = Math.Abs(entry - stop.Value);
+                if (fromStop >= minRisk)
+                    return fromStop;
+            }
+
+            if (lockedFloor.HasValue)
+            {
+                double fromFloor = Math.Abs(entry - lockedFloor.Value);
+                if (fromFloor >= minRisk)
+                    return fromFloor;
+            }
+
+            if (lockedTicks > 0)
+                return lockedTicks * tick;
+
+            return null;
+        }
+
+        private void ClearTradeManagement()
+        {
+            this.mgmtActive = false;
+            this.mgmtSawPosition = false;
+            this.mgmtRiskDistance = 0;
+            this.mgmtBeDone = false;
+            this.mgmtPartial1Done = false;
+            this.mgmtPartial2Done = false;
+            this.mgmtBusy = false;
+            this.mgmtAwaitingFill = false;
+            this.mgmtQtyBeforePartial = 0;
+            this.lastLimitText = null;
+        }
+
+        private string BuildTradeManagementStatusHtml(System.Globalization.CultureInfo inv)
+        {
+            if (!this.tradeManagementOn)
+                return "TM: off";
+
+            Position position = this.FindPosition();
+            if (!this.mgmtActive || this.mgmtRiskDistance <= 0)
+            {
+                if (position != null)
+                    return "<b style=\"color:#ff9040\">TM: on — not armed</b>";
+                return "TM: on — idle";
+            }
+
+            string flags = (this.mgmtBeDone ? "BE✓" : "BE")
+                + " " + (this.mgmtPartial1Done ? "P1✓" : "P1")
+                + " " + (this.mgmtPartial2Done ? "P2✓" : "P2");
+
+            if (position == null || position.OpenPrice <= 0)
+                return "TM: armed " + flags;
+
+            double? price = this.GetManagementMarkPrice(position, null);
+            if (!price.HasValue)
+                return "TM: armed " + flags;
+
+            int direction = position.Side == Side.Buy ? 1 : -1;
+            double prog = direction * (price.Value - position.OpenPrice) / this.mgmtRiskDistance * 100.0;
+            string color = prog >= this.beAfterPct && this.beAfterPct > 0 ? "#40c070" : "#d0d0d0";
+            return "<b style=\"color:" + color + "\">TM: " + prog.ToString("0.#", inv) + "%R</b> " + flags;
+        }
+
+        private double? GetManagementMarkPrice(Position position, double? lastPrice)
+        {
+            if (lastPrice.HasValue && lastPrice.Value > 0)
+                return lastPrice.Value;
+
+            int direction = position.Side == Side.Buy ? 1 : -1;
+            try
+            {
+                Symbol symbol = position.Symbol ?? this.CurrentSymbol;
+                if (symbol == null)
+                    return null;
+                if (direction > 0 && symbol.Bid > 0)
+                    return symbol.Bid;
+                if (direction < 0 && symbol.Ask > 0)
+                    return symbol.Ask;
+                if (symbol.Last > 0)
+                    return symbol.Last;
+            }
+            catch
+            {
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Auto BE + two partial exits from Entry↔SL distance (%R). Disabled when Trade Management is off.
+        /// Partial qty uses ceil so 1 contract × 50% still closes 1.
+        /// </summary>
+        private void CheckTradeManagement(double? lastPrice = null)
+        {
+            if (!this.tradeManagementOn || this.mgmtBusy
+                || this.panicBusy || this.slCloseBusy || this.lossLimitCloseBusy)
+                return;
+
+            // Mid-trade enable: arm once a position + SL/risk exist.
+            if (!this.mgmtActive || this.mgmtRiskDistance <= 0)
+            {
+                this.TryArmTradeManagementFromOpenPosition();
+                if (!this.mgmtActive || this.mgmtRiskDistance <= 0)
+                    return;
+            }
+
+            Position position = this.FindPosition();
+            if (position == null || position.OpenPrice <= 0 || position.Quantity <= 0)
+            {
+                // Right after Enter the fill may not be in Core yet — do not disarm.
+                if (this.mgmtSawPosition)
+                    this.ClearTradeManagement();
+                return;
+            }
+
+            this.mgmtSawPosition = true;
+
+            double? price = this.GetManagementMarkPrice(position, lastPrice);
+            if (!price.HasValue)
+                return;
+
+            int direction = position.Side == Side.Buy ? 1 : -1;
+            double progressPct = direction * (price.Value - position.OpenPrice) / this.mgmtRiskDistance * 100.0;
+            if (progressPct < 0)
+                return;
+
+            if (this.mgmtAwaitingFill)
+            {
+                if (Math.Abs(position.Quantity - this.mgmtQtyBeforePartial) > 1e-6)
+                    this.mgmtAwaitingFill = false;
+            }
+
+            if (!this.mgmtBeDone && this.beAfterPct > 0 && progressPct + 1e-9 >= this.beAfterPct)
+                this.ApplyTradeManagementBe(position);
+
+            // One partial per update. The next level waits until this fill shows up in the position,
+            // otherwise a fast move through both targets would size the second close off the old quantity.
+            if (this.mgmtAwaitingFill)
+                return;
+
+            if (!this.mgmtPartial1Done && this.partial1LevelPct > 0 && progressPct + 1e-9 >= this.partial1LevelPct)
+            {
+                if (this.ApplyTradeManagementPartial(position, 1, this.partial1ClosePct))
+                    return;
+            }
+
+            position = this.FindPosition();
+            if (position == null || position.Quantity <= 0)
+            {
+                this.ClearTradeManagement();
+                return;
+            }
+
+            if (!this.mgmtPartial2Done && this.partial2LevelPct > 0 && progressPct + 1e-9 >= this.partial2LevelPct)
+                this.ApplyTradeManagementPartial(position, 2, this.partial2ClosePct);
+        }
+
+        private void ApplyTradeManagementBe(Position position)
+        {
+            double tick = position.Symbol?.TickSize > 0
+                ? position.Symbol.TickSize
+                : (this.CurrentSymbol?.TickSize > 0 ? this.CurrentSymbol.TickSize : 0.25);
+            int dir = position.Side == Side.Buy ? 1 : -1;
+            double beStop = PositionSizing.RoundToTick(
+                position.Symbol ?? this.CurrentSymbol,
+                position.OpenPrice + dir * this.beOffsetTicks * tick);
+
+            lock (TradeSetupHub.Sync)
+            {
+                TradeSetupHub.Current.ShowStop = true;
+                TradeSetupHub.Current.StopLoss = beStop;
+                TradeSetupHub.Current.StopLocked = true;
+                TradeSetupHub.Current.LockedStopFloor = beStop;
+                // Keep the original risk ticks for widen-cap; only move the visible SL to BE.
+                if (TradeSetupHub.Current.LockedStopTicks <= 0)
+                    TradeSetupHub.Current.LockedStopTicks = this.beOffsetTicks;
+            }
+
+            this.mgmtBeDone = true;
+            this.lastLimitText = null;
+            TradeSetupHub.NotifySetupChanged();
+            this.SetStatus("TM: BE after " + this.beAfterPct.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture)
+                + "% — SL → " + (this.CurrentSymbol?.FormatPrice(beStop) ?? beStop.ToString("0.####")));
+        }
+
+        /// <summary>Sends the partial and returns true when the order was accepted.</summary>
+        private bool ApplyTradeManagementPartial(Position position, int step, double closePct)
+        {
+            double closeQty = this.CeilPartialQuantity(position, closePct);
+            if (closeQty <= 0)
+                return false;
+
+            // ClosePosition / position.Close on Rithmic flatten the whole position and ignore the
+            // quantity. A reducing market order for the exact lot count leaves the remainder.
+            Symbol symbol = position.Symbol ?? this.CurrentSymbol;
+            string orderTypeId = this.FindOrderTypeId(symbol, OrderTypeUsage.Order, OrderTypeBehavior.Market) ?? OrderType.Market;
+
+            this.mgmtBusy = true;
+            try
+            {
+                TradingOperationResult result = Core.Instance.PlaceOrder(new PlaceOrderRequestParameters
+                {
+                    Account = position.Account,
+                    Symbol = symbol,
+                    Side = position.Side == Side.Buy ? Side.Sell : Side.Buy,
+                    Quantity = closeQty,
+                    OrderTypeId = orderTypeId,
+                    TimeInForce = TimeInForce.GTC,
+                    Comment = "TNTradePanel TM P" + step
+                });
+
+                if (result != null && result.Status == TradingOperationResultStatus.Success)
+                {
+                    if (step == 1)
+                        this.mgmtPartial1Done = true;
+                    else
+                        this.mgmtPartial2Done = true;
+                    this.mgmtQtyBeforePartial = position.Quantity;
+                    this.mgmtAwaitingFill = closeQty + 1e-6 < position.Quantity;
+                    this.lastLimitText = null;
+                    this.SetStatus("TM: partial #" + step + " sent "
+                        + FormatQty(symbol, closeQty)
+                        + " of " + FormatQty(symbol, position.Quantity)
+                        + " at "
+                        + (step == 1 ? this.partial1LevelPct : this.partial2LevelPct).ToString("0.#", System.Globalization.CultureInfo.InvariantCulture)
+                        + "%R.");
+                    return true;
+                }
+
+                this.SetStatus("TM: partial #" + step + " failed — " + (result?.Message ?? "unknown error"));
+                return false;
+            }
+            finally
+            {
+                this.mgmtBusy = false;
+            }
+        }
+
+        private double CeilPartialQuantity(Position position, double closePct)
+        {
+            if (position == null || position.Quantity <= 0 || closePct <= 0)
+                return 0;
+
+            Symbol symbol = position.Symbol ?? this.CurrentSymbol;
+            double lotStep = symbol != null && symbol.LotStep > 0 ? symbol.LotStep : 1.0;
+            double raw = position.Quantity * (closePct / 100.0);
+            double closeQty = Math.Ceiling(raw / lotStep - 1e-9) * lotStep;
+            if (closeQty < lotStep)
+                closeQty = lotStep;
+            if (closeQty > position.Quantity)
+                closeQty = position.Quantity;
+            return closeQty;
         }
 
         private int CountTicks(double fromPrice, double? toPrice)
@@ -1859,7 +2597,7 @@ namespace TNTradePanel.Plugin
         {
             return position != null
                 && SameSymbol(position.Symbol, this.CurrentSymbol)
-                && SameAccount(position.Account, this.CurrentAccount);
+                && SameAccount(position.Account, this.currentAccount);
         }
 
         private bool IsEntryAtMarket(double entry, Side side)
@@ -2251,6 +2989,8 @@ namespace TNTradePanel.Plugin
             return new TradeSetup
             {
                 LossLimitUsd = source.LossLimitUsd,
+                UseFixedContracts = source.UseFixedContracts,
+                FixedContracts = source.FixedContracts,
                 Entry = source.Entry,
                 StopLoss = source.StopLoss,
                 TakeProfit = source.TakeProfit,
@@ -2271,7 +3011,11 @@ namespace TNTradePanel.Plugin
                 LockedStopTicks = source.LockedStopTicks,
                 DrawDirection = source.DrawDirection,
                 ScalpingOn = source.ScalpingOn,
-                ScalpOffsetTicks = source.ScalpOffsetTicks
+                ScalpOffsetTicks = source.ScalpOffsetTicks,
+                MaExitOn = source.MaExitOn,
+                MaType = source.MaType,
+                MaPeriod = source.MaPeriod,
+                MaExitPulse = source.MaExitPulse
             };
         }
     }

@@ -24,7 +24,26 @@ namespace TNTradePanel.Shared
                 return result;
             }
 
-            if (setup == null || !setup.StopLoss.HasValue)
+            if (setup == null)
+            {
+                result.Error = "SL line required.";
+                return result;
+            }
+
+            bool fixedQty = setup.UseFixedContracts;
+            if (fixedQty && setup.FixedContracts <= 0)
+            {
+                result.Error = "Fixed contracts must be positive.";
+                return result;
+            }
+
+            if (!fixedQty && setup.LossLimitUsd <= 0)
+            {
+                result.Error = "Risk amount must be positive.";
+                return result;
+            }
+
+            if (!setup.StopLoss.HasValue)
             {
                 result.Error = "SL line required.";
                 return result;
@@ -33,12 +52,6 @@ namespace TNTradePanel.Shared
             if (setup.UseEntryLine && setup.ShowEntry && !setup.HasEntryAndStop)
             {
                 result.Error = "Entry and SL required.";
-                return result;
-            }
-
-            if (setup.LossLimitUsd <= 0)
-            {
-                result.Error = "Loss limit must be positive.";
                 return result;
             }
 
@@ -87,15 +100,27 @@ namespace TNTradePanel.Shared
 
             double riskPerContract = slTicks * tickCost;
             double lotStep = symbol.LotStep > 0 ? symbol.LotStep : 1.0;
-            double raw = setup.LossLimitUsd / riskPerContract;
-            double quantity = Math.Floor(raw / lotStep) * lotStep;
+            double quantity;
+            if (fixedQty)
+            {
+                quantity = Math.Floor((setup.FixedContracts + lotStep * 1e-9) / lotStep) * lotStep;
+            }
+            else
+            {
+                double raw = setup.LossLimitUsd / riskPerContract;
+                quantity = Math.Floor(raw / lotStep) * lotStep;
+            }
 
             if (symbol.MaxLot > 0 && quantity > symbol.MaxLot)
                 quantity = Math.Floor(symbol.MaxLot / lotStep) * lotStep;
 
-            if (symbol.MinLot > 0 && quantity > 0 && quantity < symbol.MinLot)
+            if (quantity <= 0 || (symbol.MinLot > 0 && quantity < symbol.MinLot))
             {
-                result.Error = "Limit yields 0 contracts (risk would exceed MinLot).";
+                result.Error = fixedQty
+                    ? "Fixed contracts are below the minimum lot."
+                    : (quantity <= 0
+                        ? "Quantity: 0. Raise the risk amount or tighten SL."
+                        : "Limit yields 0 contracts (risk would exceed MinLot).");
                 result.SlTicks = slTicks;
                 result.TickCost = tickCost;
                 result.RiskPerContract = riskPerContract;
@@ -109,12 +134,6 @@ namespace TNTradePanel.Shared
             result.TickCost = tickCost;
             result.RiskPerContract = riskPerContract;
             result.Quantity = quantity;
-            if (quantity <= 0)
-            {
-                result.Error = "Quantity: 0. Raise the limit or tighten SL.";
-                return result;
-            }
-
             result.Ok = true;
             return result;
         }

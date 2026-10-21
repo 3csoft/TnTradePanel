@@ -12,6 +12,7 @@ namespace TNTradePanel.Shared
         public const string OrientCommand = "Orient";
         public const string SetupCommand = "Setup";
         public const string ScalpStopCommand = "ScalpStop";
+        public const string MaExitCommand = "MaExit";
 
         private const string SeqKey = "TNTradePanel.Hub.Seq";
         private const string CmdKey = "TNTradePanel.Hub.Cmd";
@@ -53,6 +54,9 @@ namespace TNTradePanel.Shared
         /// <summary>Setup change caused by the scalping trail (SL moved).</summary>
         public static void NotifyScalpStop() => Post(ScalpStopCommand);
 
+        /// <summary>Chart price has just touched the configured MA.</summary>
+        public static void NotifyMaExit() => Post(MaExitCommand);
+
         public static bool TryPull(ref int lastSeq, out string command)
         {
             command = null;
@@ -93,6 +97,8 @@ namespace TNTradePanel.Shared
             if (from == null || to == null)
                 return;
             to.LossLimitUsd = from.LossLimitUsd;
+            to.UseFixedContracts = from.UseFixedContracts;
+            to.FixedContracts = from.FixedContracts;
             to.Entry = from.Entry;
             to.StopLoss = from.StopLoss;
             to.TakeProfit = from.TakeProfit;
@@ -115,6 +121,10 @@ namespace TNTradePanel.Shared
             to.Dragging = from.Dragging;
             to.ScalpingOn = from.ScalpingOn;
             to.ScalpOffsetTicks = from.ScalpOffsetTicks;
+            to.MaExitOn = from.MaExitOn;
+            to.MaType = from.MaType;
+            to.MaPeriod = from.MaPeriod;
+            to.MaExitPulse = from.MaExitPulse;
         }
 
         private static string Format(TradeSetup setup)
@@ -123,6 +133,8 @@ namespace TNTradePanel.Shared
                 return string.Empty;
             return string.Join("|",
                 "L=" + setup.LossLimitUsd.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                "fx=" + (setup.UseFixedContracts ? "1" : "0"),
+                "fq=" + setup.FixedContracts.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 "E=" + FormatNum(setup.Entry),
                 "S=" + FormatNum(setup.StopLoss),
                 "T=" + FormatNum(setup.TakeProfit),
@@ -144,7 +156,11 @@ namespace TNTradePanel.Shared
                 "dd=" + setup.DrawDirection.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 "dg=" + (setup.Dragging ? "1" : "0"),
                 "sc=" + (setup.ScalpingOn ? "1" : "0"),
-                "so=" + setup.ScalpOffsetTicks.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                "so=" + setup.ScalpOffsetTicks.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                "mx=" + (setup.MaExitOn ? "1" : "0"),
+                "mt=" + setup.MaType.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                "mp=" + setup.MaPeriod.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                "mq=" + setup.MaExitPulse.ToString(System.Globalization.CultureInfo.InvariantCulture));
         }
 
         private static TradeSetup Parse(string payload)
@@ -165,6 +181,13 @@ namespace TNTradePanel.Shared
                     case "L":
                         if (double.TryParse(value, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out double limit))
                             setup.LossLimitUsd = limit;
+                        break;
+                    case "fx":
+                        setup.UseFixedContracts = value == "1";
+                        break;
+                    case "fq":
+                        if (double.TryParse(value, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out double fixedQty))
+                            setup.FixedContracts = fixedQty;
                         break;
                     case "E":
                         setup.Entry = ParseNum(value);
@@ -240,6 +263,21 @@ namespace TNTradePanel.Shared
                     case "so":
                         if (int.TryParse(value, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out int scalpTicks))
                             setup.ScalpOffsetTicks = Math.Max(0, scalpTicks);
+                        break;
+                    case "mx":
+                        setup.MaExitOn = value == "1";
+                        break;
+                    case "mt":
+                        if (int.TryParse(value, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out int maType))
+                            setup.MaType = maType == 1 ? 1 : 0;
+                        break;
+                    case "mp":
+                        if (int.TryParse(value, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out int maPeriod))
+                            setup.MaPeriod = Math.Max(2, maPeriod);
+                        break;
+                    case "mq":
+                        if (int.TryParse(value, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out int maPulse))
+                            setup.MaExitPulse = Math.Max(0, maPulse);
                         break;
                 }
             }

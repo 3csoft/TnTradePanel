@@ -25,6 +25,11 @@ namespace TNTradePanel.Indicator
         private DragTarget dragging;
         private bool mouseHooked;
         private int hubSeq;
+        private int maExitPulse;
+        private bool maExitLatched;
+        private bool maExitSeeded;
+        private int maExitPeriodSeen = -1;
+        private int maExitTypeSeen = -1;
 
         public TNTradePanelLines()
             : base()
@@ -590,7 +595,10 @@ namespace TNTradePanel.Indicator
         {
             this.PollHub();
             if (args == null || args.Reason != UpdateReason.HistoricalBar)
+            {
                 this.ApplyScalpTrail();
+                this.CheckMaExit();
+            }
         }
 
         private const int ScalpLookbackBars = 60;
@@ -739,6 +747,8 @@ namespace TNTradePanel.Indicator
             if (!TradeSetupHub.TryPull(ref this.hubSeq, out string command))
                 return;
 
+            this.ReassertMaExitPulse();
+
             if (command == TradeSetupHub.DrawLinesCommand)
                 this.ApplyDrawLines();
             else if (command == TradeSetupHub.DrawBeCommand)
@@ -749,6 +759,113 @@ namespace TNTradePanel.Indicator
                 this.ApplyOrient();
             else
                 this.CurrentChart?.RedrawBuffer();
+        }
+
+        /// <summary>
+        /// A fresh cross of the chart MA (low..high covers the average) asks the panel to flatten.
+        /// Enabling the button, or changing period/type, seeds the current touch so it does not fire immediately.
+        /// </summary>
+        private void CheckMaExit()
+        {
+            if (this.Symbol == null)
+                return;
+
+            bool on;
+            int period;
+            int type;
+            lock (TradeSetupHub.Sync)
+            {
+                TradeSetup setup = TradeSetupHub.Current;
+                on = setup.MaExitOn;
+                period = setup.MaPeriod;
+                type = setup.MaType;
+            }
+
+            if (!on || period < 2 || this.Count < period)
+            {
+                this.maExitSeeded = false;
+                return;
+            }
+
+            bool touching = this.BarTouchesMa(period, type);
+            if (!this.maExitSeeded || period != this.maExitPeriodSeen || type != this.maExitTypeSeen)
+            {
+                this.maExitSeeded = true;
+                this.maExitPeriodSeen = period;
+                this.maExitTypeSeen = type;
+                this.maExitLatched = touching;
+                return;
+            }
+
+            if (touching && !this.maExitLatched)
+                this.RaiseMaExit();
+            this.maExitLatched = touching;
+        }
+
+        private void RaiseMaExit()
+        {
+            this.maExitPulse++;
+            lock (TradeSetupHub.Sync)
+                TradeSetupHub.Current.MaExitPulse = this.maExitPulse;
+            TradeSetupHub.NotifyMaExit();
+        }
+
+        private void ReassertMaExitPulse()
+        {
+            if (this.maExitPulse <= 0)
+                return;
+            bool behind;
+            lock (TradeSetupHub.Sync)
+                behind = TradeSetupHub.Current.MaExitPulse < this.maExitPulse;
+            if (!behind)
+                return;
+            lock (TradeSetupHub.Sync)
+                TradeSetupHub.Current.MaExitPulse = this.maExitPulse;
+            TradeSetupHub.NotifyMaExit();
+        }
+
+        private bool BarTouchesMa(int period, int type)
+        {
+            double? ma = type == 1 ? this.ComputeEma(period) : this.ComputeSma(period);
+            if (!ma.HasValue)
+                return false;
+            double high = this.GetPrice(PriceType.High, 0);
+            double low = this.GetPrice(PriceType.Low, 0);
+            double tick = this.Symbol.TickSize > 0 ? this.Symbol.TickSize : 0.25;
+            double tol = tick * 0.5;
+            return low <= ma.Value + tol && high >= ma.Value - tol;
+        }
+
+        private double? ComputeSma(int period)
+        {
+            if (period < 2 || this.Count < period)
+                return null;
+            double sum = 0;
+            for (int i = 0; i < period; i++)
+                sum += this.GetPrice(PriceType.Close, i);
+            return sum / period;
+        }
+
+        private double? ComputeEma(int period)
+        {
+            if (period < 2 || this.Count < period)
+                return null;
+
+            int oldest = Math.Min(this.Count - 1, Math.Max(period * 5, period) );
+            double seed = 0;
+            for (int i = 0; i < period; i++)
+                seed += this.GetPrice(PriceType.Close, oldest - i);
+            seed /= period;
+
+            double k = 2.0 / (period + 1.0);
+            double ema = seed;
+            for (int i = oldest - period; i >= 0; i--)
+            {
+                double close = this.GetPrice(PriceType.Close, i);
+                ema = close * k + ema * (1.0 - k);
+            }
+
+            return ema;
         }
 
         private double GetMarketPrice()

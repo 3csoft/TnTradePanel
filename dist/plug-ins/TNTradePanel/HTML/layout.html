@@ -10,6 +10,23 @@
             await CefSharp.BindObjectAsync("bound");
         })();
 
+        function setSizeUi(mode, value) {
+            var riskBtn = document.getElementById('riskmodebutton');
+            var fixBtn = document.getElementById('fixmodebutton');
+            var label = document.getElementById('sizelabel');
+            var input = document.getElementById('sizeinput');
+            if (!riskBtn || !fixBtn || !label || !input)
+                return;
+            var fix = mode === 'fix';
+            riskBtn.className = fix ? 'login100-form-btn sizemode off' : 'login100-form-btn sizemode on';
+            fixBtn.className = fix ? 'login100-form-btn sizemode on' : 'login100-form-btn sizemode off';
+            label.textContent = fix ? 'Fix contracts' : 'Risk amount (USD)';
+            input.min = '1';
+            input.step = '1';
+            if (document.activeElement !== input && String(input.value) !== String(value))
+                input.value = value;
+        }
+
         function setDir(d) {
             var longBtn = document.getElementById('longbutton');
             var shortBtn = document.getElementById('shortbutton');
@@ -37,6 +54,14 @@
                 return;
             btn.className = on ? 'login100-form-btn scalp-on' : 'login100-form-btn scalp-off';
             btn.innerHTML = on ? 'Scalping: on' : 'Scalping: off';
+        }
+
+        function setMaExit(on) {
+            var btn = document.getElementById('maexitbutton');
+            if (!btn)
+                return;
+            btn.className = on ? 'login100-form-btn maexit-on' : 'login100-form-btn maexit-off';
+            btn.innerHTML = on ? 'MA kiszállás: on' : 'MA kiszállás';
         }
 
         function setAccountInfo(on) {
@@ -104,6 +129,22 @@
             width: 50% !important;
             margin-top: 0;
         }
+        #sizemoderow button {
+            font-size: 11px !important;
+            line-height: 1.15 !important;
+            padding: 6px 2px !important;
+            white-space: normal !important;
+        }
+        .sizemode.off { background: #6a6a6a !important; color: #e8e8e8 !important; }
+        .sizemode.on { background: #0a7ea4 !important; color: #ffffff !important; font-weight: 700 !important; }
+        #sizeinput {
+            height: 28px;
+            padding: 2px 6px;
+            font-size: 14px;
+            background: #1e1e1e;
+            color: #f0f0f0;
+            border: 1px solid #5a5a5a;
+        }
         .dirbtn.off { background: #6a6a6a !important; color: #e8e8e8 !important; }
         .dirbtn.on-long { background: #1a8a3a !important; color: #ffffff !important; }
         .dirbtn.on-short { background: #c02828 !important; color: #ffffff !important; }
@@ -124,6 +165,12 @@
         #scalpbutton.scalp-off { background: #6a6a6a !important; color: #e8e8e8 !important; }
         #scalpbutton.scalp-on {
             background: #0a7ea4 !important;
+            color: #ffffff !important;
+            font-weight: 700 !important;
+        }
+        #maexitbutton.maexit-off { background: #6a6a6a !important; color: #e8e8e8 !important; }
+        #maexitbutton.maexit-on {
+            background: #c4780a !important;
             color: #ffffff !important;
             font-weight: 700 !important;
         }
@@ -248,6 +295,14 @@
             <div class="row">
                 <button type="button" id="accountbutton" class="login100-form-btn">Account lookup...</button>
             </div>
+            <div class="row dirrow" id="sizemoderow">
+                <button type="button" id="riskmodebutton" class="login100-form-btn sizemode on">Risk amount</button>
+                <button type="button" id="fixmodebutton" class="login100-form-btn sizemode off">Fix contracts</button>
+            </div>
+            <div class="row">
+                <label id="sizelabel" for="sizeinput">Risk amount (USD)</label>
+                <input id="sizeinput" type="number" min="1" step="1" value="100" />
+            </div>
             <div class="row meta">
                 <div id="limittext">Limit: —</div>
             </div>
@@ -274,6 +329,9 @@
                 <button type="button" id="scalpbutton" class="login100-form-btn scalp-off">Scalping: off</button>
             </div>
             <div class="row">
+                <button type="button" id="maexitbutton" class="login100-form-btn maexit-off">MA kiszállás</button>
+            </div>
+            <div class="row">
                 <button type="button" id="enterbutton" class="login100-form-btn">Enter</button>
             </div>
             <div class="row">
@@ -283,7 +341,7 @@
                 <div id="ghostwarn">GHOST ORDERS — Panic!</div>
             </div>
             <div class="row">
-                <div id="statustext">Loss limit and line styles are in panel Settings.</div>
+                <div id="statustext">Defaults and line styles are in panel Settings.</div>
             </div>
             <div class="row">
                 <button type="button" id="accountinfobutton" class="login100-form-btn">Account [show]</button>

@@ -8,7 +8,7 @@
 
 A dockable **risk-sized trade panel** for [Quantower](https://www.quantower.com), with draggable chart lines and a **virtual stop-loss** (no SL order — price touch flattens the account).
 
-You place Entry / SL / TP lines on the chart, the panel sizes quantity from a USD loss limit, then **Enter** sends the order with TP attached. The SL stays as a managed line. Optional break-even (BE) line moves the SL to average entry when touched.
+You place Entry / SL / TP lines on the chart. The panel sizes the order from a **USD risk amount** or a **fixed contract count**, then **Enter** sends it with TP attached. The SL stays as a managed line. Optional tools after entry: break-even, partial exits, a scalping trail, and an MA exit that flattens the account when price touches a chart SMA or EMA.
 
 ### Short demo
 
@@ -18,8 +18,8 @@ Watch on YouTube: [https://youtu.be/sMG_ZUogGO0](https://youtu.be/sMG_ZUogGO0)
 
 ## Features
 
-- **Loss limit (USD)** — sizes quantity; also an **emergency flatten** if floating loss reaches the limit (even while dragging SL).
-- **Min 1 contract (optional, off by default)** — if sizing gives quantity 0, enter with the minimum lot and temporarily raise the loss limit to that trade's risk until flat.
+- **Risk amount / Fix contracts** — switch on the panel. Risk amount sizes quantity from a USD risk and is also the **emergency flatten** if floating loss reaches that amount (even while dragging SL). Fix contracts sends that many contracts; the panel shows the resulting USD risk. The active value is edited on the panel. Settings only store the defaults.
+- **Min 1 contract (optional, off by default)** — if risk-amount sizing gives quantity 0, enter with the minimum lot and temporarily raise the risk-amount limit to that trade's risk until flat. Fix-contracts mode does not use this fallback.
 - **Daily max loss (USD, 0 = off)** — once the day's PnL (broker Net PnL + live open PnL) reaches −limit, entries are blocked and the account is flattened.
 - **Max open contracts** — default 10; entries/scale-ins are capped so total open size on the linked symbol cannot exceed this (partial fill of the sized quantity when headroom is smaller).
 - **Lines** — place or clear Entry, SL, TP on the color-linked chart (indicator required). Each line has a wide colored tag with a round grip on the left for easy dragging.
@@ -29,8 +29,11 @@ Watch on YouTube: [https://youtu.be/sMG_ZUogGO0](https://youtu.be/sMG_ZUogGO0)
 - **Virtual SL** — when price touches the SL line, **all positions and orders** on the selected account are flattened.
 - **SL risk lock** — after entry, SL cannot widen beyond the stop captured at that entry (snaps back on drop). A scale-in overwrites the baseline with wherever the SL stands at the new entry.
 - **BE line** — purple button; with an open position, drag into place; on touch, SL moves to avg entry ± offset ticks and the BE line is removed.
+- **Scalping** — panel toggle, off by default. In profit, when the current with-trend candle breaks the last counter-candle group (long: the reds' highest high; short: the greens' lowest low), the SL jumps past that group's other extreme by the offset in Settings. The same tick offset is used when a BE line is hit.
+- **Partial close & trade management** (Settings, off by default) — after entry, optional auto BE and two partial exits measured as % of the Entry↔SL distance. Partial size uses ceil (1 contract × 50% closes 1) and is sent as a reducing market order, so a 4-lot position at 75% closes 3 and leaves 1. The second partial waits until that fill reduces the open quantity. Remainder is left for manual exit.
 - **Scale-in** — only allowed when SL is already at/beyond prior entry (no open risk).
 - **Panic** — close everything on the account and reset line state.
+- **MA exit** — button under Scalping. While on, a fresh touch of the chart-timeframe SMA or EMA (type and period in Settings) flattens the account the same way as Panic, in profit or in loss. Turning it on does not exit if price is already on the average; the next touch does. Stays armed for the next trade.
 - **Lock 1h** — confirm once; blocks panel entries for the selected account (that connection) for one hour. Survives Quantower restart; clears when the hour is up.
 - **Lock Out** — confirm once; blocks panel entries for the selected account (that connection) for the rest of the local day. Survives Quantower restart; clears tomorrow.
 - **Ghost-order warning** — flashing alert under Panic when the account has no position but leftover working orders.
@@ -128,20 +131,27 @@ Indicator  (TNTradePanelLines)  ← must be on the chart for draw/drag
 ```
 
 1. Press **LONG** or **SHORT**, then **Lines** to place levels; drag SL/TP/Entry on the chart.
-2. Panel shows **Quantity** and **RR** from the loss limit and distances.
+2. Panel shows **Quantity** and **RR** from the selected size mode (risk amount or fixed contracts) and the distances.
 3. **Enter** sends the order. Entry/TP chart lines clear (they became real orders); SL stays locked.
 4. Price touching the SL line → full account flatten + state reset.
 5. **BE line** (optional) → on touch, SL jumps to average entry + offset ticks (Settings).
+6. **Trade management** (optional, Settings) → after entry, auto BE and up to two partial exits, each a percent of the Entry↔SL distance. A partial is a reducing market order (4 contracts × 75% sells 3 and leaves 1). The second partial waits until the first fill shows up.
+7. **Scalping** (optional) → trails the virtual SL behind broken counter-candle groups while the trade is in profit.
+8. **MA kiszállás** (optional) → while the button is on, the next time the current chart candle touches the SMA or EMA from Settings, the account is flattened like Panic. Profit and loss both count. The average uses the chart timeframe. Turning the button on while price is already on the average does not exit; the next fresh touch does. The button stays on for the following trade.
+9. **Fix contracts** that risk more than the risk amount raise the emergency flatten limit to that trade's risk until the account is flat, so the virtual SL is not cut off early.
 
 ## Panel controls
 
 | Control | Action |
 | --- | --- |
 | **Account** | Select trading account (or Account lookup) |
+| **Risk amount / Fix contracts** | Size mode. The input under the buttons edits the active value (USD risk, or contract count) |
 | **Entry: on/off** | Show/hide Entry line; with SL/TP out, places at current market |
 | **LONG / SHORT** | Draw direction |
 | **Lines** | Toggle Entry/SL/TP placement (yellow button) |
 | **BE line** | Toggle break-even line (open position only); removed when hit |
+| **Scalping** | Toggle the candle-trail stop (in profit only) |
+| **MA kiszállás** | Toggle MA exit. On a fresh touch of the chart SMA/EMA, flatten the account like Panic |
 | **Enter** | Place order |
 | **Panic** | Flatten account + clear setup |
 | **Ghost warning** | Flashes under Panic if orders remain with no open position |
@@ -149,19 +159,28 @@ Indicator  (TNTradePanelLines)  ← must be on the chart for draw/drag
 
 ## Settings
 
-- **Loss limit (USD)**
-- **BE hit: SL = avg entry + X ticks**
+- **Default size mode** — Risk amount or Fix contracts
+- **Default risk amount (USD)** — starting risk amount; also the emergency flatten limit
+- **Default fixed contracts** — starting contract count for Fix contracts mode
+- **BE hit: SL = avg entry + X ticks** — also the scalping SL offset past the counter-candle extreme
 - **Allow 1 contract when quantity = 0** (default off)
 - **Daily max loss (USD, 0 = off)**
 - **Max open contracts** (default 10)
+- **MA exit type** — SMA or EMA, on the chart timeframe (default SMA)
+- **MA exit period** (default 20)
+- **Partial close & trade management** (master toggle)
+  - **BE after (% of Entry↔SL, 0 = off)** — default 100
+  - **1st / 2nd exit level (% of Entry↔SL, 0 = off)** — defaults 100 / 200
+  - **1st / 2nd partial close (% of open qty, ceil)** — default 50 / 50
 - Entry / SL / TP / BE **line colors**, **width**, **style** (Solid, Dash, Dot, …)
 
 ## Troubleshooting
 
-- **No lines / BE does nothing** — add **TN Trade Panel Lines** to the chart; status bar warns if the indicator is missing.
+- **No lines / BE / scalping / MA exit does nothing** — add **TN Trade Panel Lines** to the chart and restart Quantower after a DLL update. MA exit uses that chart's timeframe. The status bar warns if the indicator is missing.
+- **MA exit did not close while price was already on the average** — arming waits for the next touch, so a candle that is sitting on the MA does not flatten until price leaves and comes back.
 - **Wrong symbol / continuous vs dated** — panel and indicator match continuous roots (e.g. `MNQ`) to dated contracts (`MNQZ6.CME`).
 - **SL widens again** — restart Quantower after updating DLLs so both plugin and indicator load the same build.
-- **Quantity: 0** — raise the loss limit, tighten SL, or enable *Allow 1 contract when quantity = 0*.
+- **Quantity: 0** — raise the risk amount, tighten SL, switch to Fix contracts, or enable *Allow 1 contract when quantity = 0*.
 - **Daily limit shows "—"** — the broker does not publish a `Net PnL` account field; the daily limit is then inactive.
 
 ## Disclaimer

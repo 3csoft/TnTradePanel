@@ -7,6 +7,12 @@ namespace TNTradePanel.Shared
     {
         public double LossLimitUsd { get; set; } = 100;
 
+        /// <summary>When true, quantity is FixedContracts. Otherwise quantity is sized from LossLimitUsd.</summary>
+        public bool UseFixedContracts { get; set; }
+
+        /// <summary>Order quantity used when <see cref="UseFixedContracts"/> is true.</summary>
+        public double FixedContracts { get; set; } = 1;
+
         public double? Entry { get; set; }
         public double? StopLoss { get; set; }
         public double? TakeProfit { get; set; }
@@ -43,6 +49,14 @@ namespace TNTradePanel.Shared
         public bool ScalpingOn { get; set; }
         /// <summary>Ticks beyond the counter-candle group extreme for the scalping SL.</summary>
         public int ScalpOffsetTicks { get; set; } = 4;
+
+        /// <summary>When true, a fresh touch of the chart MA flattens the account.</summary>
+        public bool MaExitOn { get; set; }
+        /// <summary>0 = SMA, 1 = EMA. Chart timeframe.</summary>
+        public int MaType { get; set; }
+        public int MaPeriod { get; set; } = 20;
+        /// <summary>Increments on each new MA touch so a later setup post cannot drop the exit.</summary>
+        public int MaExitPulse { get; set; }
 
         /// <summary>Use Entry line price only when the line is actually visible (cleared after entry).</summary>
         public bool HasEntryLine =>
